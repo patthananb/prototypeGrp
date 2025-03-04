@@ -1,46 +1,169 @@
-#include <Wire.h>
+#include <Arduino.h>
+#include <AiEsp32RotaryEncoder.h>
 #include <LiquidCrystal_I2C.h>
-#include <Encoder.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
-// LCD setup
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-// Rotary encoder setup
-#define ROTARY_CLK 11
-#define ROTARY_DT 12
-#define ROTARY_SW 13
-Encoder myEnc(ROTARY_CLK, ROTARY_DT);
+#define ROTARY_ENCODER_A_PIN        27
+#define ROTARY_ENCODER_B_PIN        25
+#define ROTARY_ENCODER_BUTTON_PIN   26
+#define ROTARY_ENCODER_STEPS        4
 
-// LED pins
-#define LED1 8
-#define LED2 9
-#define LED3 10
-#define LED4 6
-#define LED5 7
+// Long press threshold (in milliseconds)
+#define LONG_PRESS_TIME 1000 
+static const unsigned long DEBOUNCE_DELAY_KNOB = 50;
 
-void displayHomePage();
-void updateLEDs();
-void channel1();
-void channel2();
-void channel3();
-void channel4();
-void channel5();
-int channel = 1; // Current channel
-bool selectingChannel = false; // Channel selection mode flag
-bool editingChannel = false; // Channel editing mode flag
-long lastPressTime = 0;
-bool buttonHeld = false;
-long lastActivityTime = 0; // Track last activity time
-int pwmValues[5] = {255, 255, 255, 255, 255}; // PWM values for each channel
+// Behavior flags
+bool rotateLeftFlag       = false;
+bool rotateRightFlag      = false;
+bool buttonPressedFlag    = false;
+bool buttonLongPressedFlag= false;
+
+// Track state
+static unsigned long lastKnobChange  = 0;
+static long lastEncoderValue         = 0;
+static bool lastButtonState          = true;
+static unsigned long buttonDownTime  = 0;
+static unsigned long lastLongPressTime = 0;
+
+int channel = 1;
+int onoff = 0; //off = 0, on =1
+int intensity = 0;
+char timerValue;
+
+static int currentPage = 0;
+static int totalPages = 3; // Number of pages to cycle through
+
+//declare lcd functions prototype
+void lcdHomepage();
+void selectChannel();
+void onofftimer();
+void selectedChannel1();
+void selectedChannel2();
+void selectedChannel3();
+void selectedChannel4();
+void selectedChannel5();
+void onTimer();
+void offTimer();
+
+// Rotary Encoder object
+AiEsp32RotaryEncoder rotaryEncoder = 
+    AiEsp32RotaryEncoder(ROTARY_ENCODER_A_PIN, ROTARY_ENCODER_B_PIN, ROTARY_ENCODER_STEPS);
+
+void IRAM_ATTR readEncoderISR() {
+    rotaryEncoder.readEncoder_ISR();
+}
+
+void rotary_onButtonClick() {
+    Serial.println("Button clicked");
+}
+
+// FreeRTOS task function for rotary encoder
+void rotaryTask(void *pvParameters) {
+    for (;;) {
+        // 1) Check for rotation (debounced)
+        if (rotaryEncoder.encoderChanged()) {
+            unsigned long currentTime = millis();
+            if (currentTime - lastKnobChange > DEBOUNCE_DELAY_KNOB) {
+                lastKnobChange = currentTime;
+
+                long currentEncoderValue = rotaryEncoder.readEncoder();
+                if (currentEncoderValue > lastEncoderValue) {
+                    rotateRightFlag = true;
+                } else if (currentEncoderValue < lastEncoderValue) {
+                    rotateLeftFlag = true;
+                }
+                lastEncoderValue = currentEncoderValue;
+            }
+        }
+
+        // 2) Check for button press and long press
+        bool currentButtonState = (digitalRead(ROTARY_ENCODER_BUTTON_PIN) == LOW);
+
+        // Button went down
+        if (currentButtonState && !lastButtonState) {
+            buttonDownTime     = millis();
+            lastLongPressTime  = 0; // reset when freshly pressed
+        }
+
+        // Button is held down
+        if (currentButtonState) {
+            // Check if we've passed the initial long press time
+            if ((millis() - buttonDownTime) > LONG_PRESS_TIME) {
+                // Only trigger if at least 1 second has passed since last long press event
+                if ((millis() - lastLongPressTime) > 1000) {
+                    buttonLongPressedFlag = true;
+                    lastLongPressTime     = millis();
+                }
+            }
+        }
+
+        // Button released
+        if (!currentButtonState && lastButtonState) {
+            unsigned long pressDuration = millis() - buttonDownTime;
+            // If it was not a long press, treat it as a short press
+            if (pressDuration < LONG_PRESS_TIME) {
+                buttonPressedFlag = true;
+            }
+        }
+        lastButtonState = currentButtonState;
+
+        // // Print and reset flags
+        // if (rotateRightFlag) {
+        //     Serial.println("Rotated Right");
+        //     rotateRightFlag = false;
+        // }
+        // if (rotateLeftFlag) {
+        //     Serial.println("Rotated Left");
+        //     rotateLeftFlag = false;
+        // }
+        // if (buttonPressedFlag) {
+        //     Serial.println("Button Pressed");
+        //     buttonPressedFlag = false;
+        // }
+        // if (buttonLongPressedFlag) {
+        //     Serial.println("Button Long Pressed");
+        //     buttonLongPressedFlag = false;
+        // }
+
+        // Avoid hogging the CPU
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+// FreeRTOS task function to print current page
+void printCurrentPageTask(void *pvParameters) {
+    for (;;) {
+        Serial.print("Current Page: ");
+        Serial.println(currentPage);
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Print every second
+    }
+}
 
 void setup() {
-    pinMode(ROTARY_SW, INPUT_PULLUP);
-    pinMode(LED1, OUTPUT);
-    pinMode(LED2, OUTPUT);
-    pinMode(LED3, OUTPUT);
-    pinMode(LED4, OUTPUT);
-    pinMode(LED5, OUTPUT);
-    
+    Serial.begin(115200);
+
+    pinMode(ROTARY_ENCODER_BUTTON_PIN, INPUT_PULLUP);
+
+    // Initialize the rotary encoder
+    rotaryEncoder.begin();
+    rotaryEncoder.setup([]{ readEncoderISR(); });
+    rotaryEncoder.setBoundaries(0, 100, true);
+
+    // Disable acceleration
+    rotaryEncoder.setAcceleration(0);
+
+    // Initialize last encoder value
+    lastEncoderValue = rotaryEncoder.readEncoder();
+    lastButtonState  = true;
+
+    // Create the FreeRTOS tasks
+    xTaskCreate(rotaryTask, "RotaryTask", 2048, NULL, 1, NULL);
+    xTaskCreate(printCurrentPageTask, "PrintCurrentPageTask", 2048, NULL, 1, NULL);
+
+    // Initialize the LCD
     lcd.init();
     lcd.backlight();
     lcd.setCursor(0, 0);
@@ -48,93 +171,36 @@ void setup() {
     lcd.setCursor(0, 1);
     lcd.print("Initializing...");
     delay(2000);
-    displayHomePage();
-    updateLEDs();
 }
 
 void loop() {
-    static long lastPosition = 0;
-    long newPosition = myEnc.read() / 2;
-    // Check for timeout in selection mode
-    if ((selectingChannel || editingChannel) && (millis() - lastActivityTime > 3000)) {
-        selectingChannel = false;
-        editingChannel = false;
-        displayHomePage();
-        updateLEDs();
+    // Check for rotation and update the current page
+    if (rotateRightFlag) {
+        currentPage = (currentPage + 1) % totalPages;
+        rotateRightFlag = false;
+    } else if (rotateLeftFlag) {
+        currentPage = (currentPage - 1 + totalPages) % totalPages;
+        rotateLeftFlag = false;
     }
 
-    if (digitalRead(ROTARY_SW) == LOW) {
-        if (!buttonHeld) {
-            lastPressTime = millis();
-            buttonHeld = true;
-            lastActivityTime = millis(); // Reset activity timer on button press
-        }
-    } else {
-        if (buttonHeld) {
-            if (editingChannel) {
-                // Exit editing mode with a short press
-                editingChannel = false;
-                updateLEDs();
-                displayHomePage();
-            } else if (selectingChannel) {
-                // Enter editing mode with a short press
-                selectingChannel = false;
-                editingChannel = true;
-                lcd.clear();
-                lcd.setCursor(0, 0);
-                lcd.print("EDIT CHANNEL");
-                lcd.setCursor(0, 1);
-                lcd.print("Intensity: ");
-                lcd.print(pwmValues[channel - 1]);
-            } else if (millis() - lastPressTime > 1000) { // Detect long press and release
-                selectingChannel = true;
-                lcd.clear();
-                lcd.setCursor(0, 0);
-                lcd.print("SELECT CHANNEL");
-                lcd.setCursor(0, 1);
-                lcd.print("Channel: ");
-                lcd.print(channel);
-                lastActivityTime = millis(); // Reset activity timer when entering selection mode
-            }
-            buttonHeld = false;
-        }
-    }
-    
-    if (selectingChannel && newPosition != lastPosition) {
-        if (newPosition > lastPosition) {
-            channel++;
-        } else {
-            channel--;
-        }
-        //cycling between channels
-        if (channel > 5) channel = 1;
-        if (channel < 1) channel = 5;
-
-        lastActivityTime = millis(); // Reset activity timer when encoder is turned
-        lastPosition = newPosition;
-        lcd.setCursor(9, 1);
-        lcd.print(channel);
+    // Display the current page
+    switch (currentPage) {
+        case 0:
+            lcdHomepage();
+            break;
+        case 1:
+            selectChannel();
+            break;
+        case 2:
+            onofftimer();
+            break;
     }
 
-    if (editingChannel && newPosition != lastPosition) {
-        if (newPosition > lastPosition) {
-            pwmValues[channel - 1] += 5;
-        } else {
-            pwmValues[channel - 1] -= 5;
-        }
-        // Constrain PWM values between 0 and 255
-        if (pwmValues[channel - 1] > 255) pwmValues[channel - 1] = 255;
-        if (pwmValues[channel - 1] < 0) pwmValues[channel - 1] = 0;
-
-        lastActivityTime = millis(); // Reset activity timer when encoder is turned
-        lastPosition = newPosition;
-        lcd.setCursor(11, 1);
-        lcd.print(pwmValues[channel - 1]);
-        updateLEDs();
-    }
+    // Avoid hogging the CPU
+    delay(10);
 }
 
-void displayHomePage() {
+void lcdHomepage(){
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("HOMEPAGE");
@@ -143,52 +209,82 @@ void displayHomePage() {
     lcd.print(channel);
 }
 
-void updateLEDs() {
-    switch (channel) {
-        case 1: channel1(); break;
-        case 2: channel2(); break;
-        case 3: channel3(); break;
-        case 4: channel4(); break;
-        case 5: channel5(); break;
-    }
+// Layer 2
+void selectChannel(){
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("SELECT CHANNEL");
+    lcd.setCursor(0, 1);
+    lcd.print("Channel: ");
+    lcd.print(channel);
 }
 
-void channel1() {
-    analogWrite(LED1, pwmValues[0]);
-    analogWrite(LED2, 0);
-    analogWrite(LED3, 0);
-    analogWrite(LED4, 0);
-    analogWrite(LED5, 0);
+void onofftimer(){
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("ON/OFF TIMER");
+    lcd.setCursor(0, 1);
+    lcd.print(onoff);
 }
 
-void channel2() {
-    analogWrite(LED1, 0);
-    analogWrite(LED2, pwmValues[1]);
-    analogWrite(LED3, 0);
-    analogWrite(LED4, 0);
-    analogWrite(LED5, 0);
+// Layer 3
+// Select channel
+void selectedChannel1(){
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Channel 1");
+    lcd.setCursor(0, 1);
+    lcd.print("Intensity: ");
+    lcd.print(channel);
 }
-
-void channel3() {
-    analogWrite(LED1, 0);
-    analogWrite(LED2, 0);
-    analogWrite(LED3, pwmValues[2]);
-    analogWrite(LED4, 0);
-    analogWrite(LED5, 0);
+void selectedChannel2(){
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Channel 2");
+    lcd.setCursor(0, 1);
+    lcd.print("Intensity: ");
+    lcd.print(intensity);
 }
-
-void channel4() {
-    analogWrite(LED1, 0);
-    analogWrite(LED2, 0);
-    analogWrite(LED3, 0);
-    analogWrite(LED4, pwmValues[3]);
-    analogWrite(LED5, 0);
+void selectedChannel3(){
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Channel 3");
+    lcd.setCursor(0, 1);
+    lcd.print("Intensity: ");
+    lcd.print(intensity);
 }
-
-void channel5() {
-    analogWrite(LED1, 0);
-    analogWrite(LED2, 0);
-    analogWrite(LED3, 0);
-    analogWrite(LED4, 0);
-    analogWrite(LED5, pwmValues[4]);
+void selectedChannel4(){
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Channel 4");
+    lcd.setCursor(0, 1);
+    lcd.print("Intensity: ");
+    lcd.print(intensity);
+}
+void selectedChannel5(){
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Channel 5");
+    lcd.setCursor(0, 1);
+    lcd.print("Intensity: ");
+    lcd.print(intensity);
+}
+// On/off timer
+void onTimer(){
+    lcd.clear();
+    lcd.print(timerValue);
+    lcd.print("ON TIMER");
+    lcd.setCursor(0, 1);
+    lcd.print("Time: ");
+    time_t now = time(NULL);
+    lcd.print(now);
+}
+void offTimer() {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("OFF TIMER");
+    lcd.setCursor(0, 1);
+    lcd.print("Time: ");
+    time_t now = time(NULL);
+    lcd.print(now);
 }
