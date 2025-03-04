@@ -14,12 +14,14 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 // Long press threshold (in milliseconds)
 #define LONG_PRESS_TIME 1000 
 static const unsigned long DEBOUNCE_DELAY_KNOB = 50;
+static const unsigned long INACTIVITY_TIMEOUT = 3000; // 3 seconds
 
 // Behavior flags
 bool rotateLeftFlag       = false;
 bool rotateRightFlag      = false;
 bool buttonPressedFlag    = false;
 bool buttonLongPressedFlag= false;
+bool buttonHeldFlag       = false;
 
 // Track state
 static unsigned long lastKnobChange  = 0;
@@ -27,6 +29,7 @@ static long lastEncoderValue         = 0;
 static bool lastButtonState          = true;
 static unsigned long buttonDownTime  = 0;
 static unsigned long lastLongPressTime = 0;
+static unsigned long lastActivityTime = 0;
 
 int channel = 1;
 int onoff = 0; //off = 0, on =1
@@ -35,6 +38,15 @@ char timerValue;
 
 static int currentPage = 0;
 static int totalPages = 3; // Number of pages to cycle through
+static int selectedChannel = 0; // Track selected channel
+
+enum State {
+    HOME,
+    SELECT_CHANNEL,
+    ADJUST_INTENSITY
+};
+
+State currentState = HOME;
 
 //declare lcd functions prototype
 void lcdHomepage();
@@ -76,6 +88,7 @@ void rotaryTask(void *pvParameters) {
                     rotateLeftFlag = true;
                 }
                 lastEncoderValue = currentEncoderValue;
+                lastActivityTime = millis(); // Reset inactivity timer
             }
         }
 
@@ -95,7 +108,9 @@ void rotaryTask(void *pvParameters) {
                 // Only trigger if at least 1 second has passed since last long press event
                 if ((millis() - lastLongPressTime) > 1000) {
                     buttonLongPressedFlag = true;
+                    buttonHeldFlag = true;
                     lastLongPressTime     = millis();
+                    lastActivityTime = millis(); // Reset inactivity timer
                 }
             }
         }
@@ -106,27 +121,11 @@ void rotaryTask(void *pvParameters) {
             // If it was not a long press, treat it as a short press
             if (pressDuration < LONG_PRESS_TIME) {
                 buttonPressedFlag = true;
+                lastActivityTime = millis(); // Reset inactivity timer
             }
+            buttonHeldFlag = false;
         }
         lastButtonState = currentButtonState;
-
-        // // Print and reset flags
-        // if (rotateRightFlag) {
-        //     Serial.println("Rotated Right");
-        //     rotateRightFlag = false;
-        // }
-        // if (rotateLeftFlag) {
-        //     Serial.println("Rotated Left");
-        //     rotateLeftFlag = false;
-        // }
-        // if (buttonPressedFlag) {
-        //     Serial.println("Button Pressed");
-        //     buttonPressedFlag = false;
-        // }
-        // if (buttonLongPressedFlag) {
-        //     Serial.println("Button Long Pressed");
-        //     buttonLongPressedFlag = false;
-        // }
 
         // Avoid hogging the CPU
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -174,30 +173,68 @@ void setup() {
 }
 
 void loop() {
-    // Check for rotation and update the current page
-    if (rotateRightFlag) {
-        currentPage = (currentPage + 1) % totalPages;
-        rotateRightFlag = false;
-    } else if (rotateLeftFlag) {
-        currentPage = (currentPage - 1 + totalPages) % totalPages;
-        rotateLeftFlag = false;
-    }
+    unsigned long currentTime = millis();
 
-    // Display the current page
-    switch (currentPage) {
-        case 0:
+    switch (currentState) {
+        case HOME:
             lcdHomepage();
+            if (buttonHeldFlag) {
+                currentState = SELECT_CHANNEL;
+                lastActivityTime = currentTime;
+            }
             break;
-        case 1:
+
+        case SELECT_CHANNEL:
             selectChannel();
+            if (buttonPressedFlag) {
+                currentState = ADJUST_INTENSITY;
+                buttonPressedFlag = false;
+                lastActivityTime = currentTime;
+            } else if (currentTime - lastActivityTime > INACTIVITY_TIMEOUT) {
+                currentState = HOME;
+            }
             break;
-        case 2:
-            onofftimer();
+
+        case ADJUST_INTENSITY:
+            switch (selectedChannel) {
+                case 0:
+                    selectedChannel1();
+                    break;
+                case 1:
+                    selectedChannel2();
+                    break;
+                case 2:
+                    selectedChannel3();
+                    break;
+                case 3:
+                    selectedChannel4();
+                    break;
+                case 4:
+                    selectedChannel5();
+                    break;
+            }
+            if (buttonPressedFlag) {
+                buttonPressedFlag = false;
+                // Adjust intensity logic here
+                intensity++;
+                if (intensity > 100) intensity = 0;
+                lastActivityTime = currentTime;
+            } else if (rotateRightFlag) {
+                selectedChannel = (selectedChannel + 1) % 5;
+                rotateRightFlag = false;
+                lastActivityTime = currentTime;
+            } else if (rotateLeftFlag) {
+                selectedChannel = (selectedChannel - 1 + 5) % 5;
+                rotateLeftFlag = false;
+                lastActivityTime = currentTime;
+            } else if (currentTime - lastActivityTime > INACTIVITY_TIMEOUT) {
+                currentState = HOME;
+            }
             break;
     }
 
     // Avoid hogging the CPU
-    delay(10);
+    delay(100);
 }
 
 void lcdHomepage(){
@@ -235,7 +272,7 @@ void selectedChannel1(){
     lcd.print("Channel 1");
     lcd.setCursor(0, 1);
     lcd.print("Intensity: ");
-    lcd.print(channel);
+    lcd.print(intensity);
 }
 void selectedChannel2(){
     lcd.clear();
@@ -268,23 +305,4 @@ void selectedChannel5(){
     lcd.setCursor(0, 1);
     lcd.print("Intensity: ");
     lcd.print(intensity);
-}
-// On/off timer
-void onTimer(){
-    lcd.clear();
-    lcd.print(timerValue);
-    lcd.print("ON TIMER");
-    lcd.setCursor(0, 1);
-    lcd.print("Time: ");
-    time_t now = time(NULL);
-    lcd.print(now);
-}
-void offTimer() {
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("OFF TIMER");
-    lcd.setCursor(0, 1);
-    lcd.print("Time: ");
-    time_t now = time(NULL);
-    lcd.print(now);
 }
