@@ -1,240 +1,237 @@
 #include <Arduino.h>
-#include <AiEsp32RotaryEncoder.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <LiquidCrystal_I2C.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+#define TOUCH_PIN_1 32  // GPIO 32
+#define TOUCH_PIN_2 33  // GPIO 33
+#define TOUCH_PIN_3 12  // GPIO 12
+#define TOUCH_PIN_4 14  // GPIO 14
 
-#define ROTARY_ENCODER_A_PIN        27
-#define ROTARY_ENCODER_B_PIN        25
-#define ROTARY_ENCODER_BUTTON_PIN   26
-#define ROTARY_ENCODER_STEPS        4
-
-// Long press threshold (in milliseconds)
-#define LONG_PRESS_TIME 1000 
-static const unsigned long DEBOUNCE_DELAY_KNOB = 50;
-static const unsigned long INACTIVITY_TIMEOUT = 3000; // 3 seconds
+// Set a threshold based on your board's sensitivity
+#define TOUCH_THRESHOLD 30  
 
 // Behavior flags
-bool rotateLeftFlag       = false;
-bool rotateRightFlag      = false;
-bool buttonPressedFlag    = false;
-bool buttonLongPressedFlag= false;
-bool buttonHeldFlag       = false;
+bool rotateRightFlag = false;
+bool rotateLeftFlag = false;
+bool buttonPressFlag = false;
+bool buttonHeldFlag = false;
 
-// Track state
-static unsigned long lastKnobChange  = 0;
-static long lastEncoderValue         = 0;
-static bool lastButtonState          = true;
-static unsigned long buttonDownTime  = 0;
-static unsigned long lastLongPressTime = 0;
-static unsigned long lastActivityTime = 0;
-
-int channel = 1;
-int onoff = 0; //off = 0, on =1
-int intensity = 0;
-char timerValue;
-
-static int currentPage = 0;
-static int totalPages = 3; // Number of pages to cycle through
-static int selectedChannel = 0; // Track selected channel
+int pageIndex = 0;
 
 enum State {
     HOME,
-    SELECT_CHANNEL,
-    ADJUST_INTENSITY
+    MODE_SELECT,
+    SELECT_CHANNEL_MODE,
+    ON_OFF_TIMER_MODE,
+    ADJUST_INTENSITY__CH1_MODE,
+    ADJUST_INTENSITY__CH2_MODE,
+    ADJUST_INTENSITY__CH3_MODE,
+    ADJUST_INTENSITY__CH4_MODE,
+    ADJUST_INTENSITY__CH5_MODE,
 };
 
 State currentState = HOME;
 
-//declare lcd functions prototype
-void lcdHomepage();
-void selectChannel();
-void onofftimer();
-void selectedChannel1();
-void selectedChannel2();
-void selectedChannel3();
-void selectedChannel4();
-void selectedChannel5();
-void onTimer();
-void offTimer();
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-// Rotary Encoder object
-AiEsp32RotaryEncoder rotaryEncoder = 
-    AiEsp32RotaryEncoder(ROTARY_ENCODER_A_PIN, ROTARY_ENCODER_B_PIN, ROTARY_ENCODER_STEPS);
-
-void IRAM_ATTR readEncoderISR() {
-    rotaryEncoder.readEncoder_ISR();
-}
-
-void rotary_onButtonClick() {
-    Serial.println("Button clicked");
-}
-
-// FreeRTOS task function for rotary encoder
-void rotaryTask(void *pvParameters) {
-    for (;;) {
-        // 1) Check for rotation (debounced)
-        if (rotaryEncoder.encoderChanged()) {
-            unsigned long currentTime = millis();
-            if (currentTime - lastKnobChange > DEBOUNCE_DELAY_KNOB) {
-                lastKnobChange = currentTime;
-
-                long currentEncoderValue = rotaryEncoder.readEncoder();
-                if (currentEncoderValue > lastEncoderValue) {
-                    rotateRightFlag = true;
-                } else if (currentEncoderValue < lastEncoderValue) {
-                    rotateLeftFlag = true;
-                }
-                lastEncoderValue = currentEncoderValue;
-                lastActivityTime = millis(); // Reset inactivity timer
-            }
-        }
-
-        // 2) Check for button press and long press
-        bool currentButtonState = (digitalRead(ROTARY_ENCODER_BUTTON_PIN) == LOW);
-
-        // Button went down
-        if (currentButtonState && !lastButtonState) {
-            buttonDownTime     = millis();
-            lastLongPressTime  = 0; // reset when freshly pressed
-        }
-
-        // Button is held down
-        if (currentButtonState) {
-            // Check if we've passed the initial long press time
-            if ((millis() - buttonDownTime) > LONG_PRESS_TIME) {
-                // Only trigger if at least 1 second has passed since last long press event
-                if ((millis() - lastLongPressTime) > 1000) {
-                    buttonLongPressedFlag = true;
-                    buttonHeldFlag = true;
-                    lastLongPressTime     = millis();
-                    lastActivityTime = millis(); // Reset inactivity timer
-                }
-            }
-        }
-
-        // Button released
-        if (!currentButtonState && lastButtonState) {
-            unsigned long pressDuration = millis() - buttonDownTime;
-            // If it was not a long press, treat it as a short press
-            if (pressDuration < LONG_PRESS_TIME) {
-                buttonPressedFlag = true;
-                lastActivityTime = millis(); // Reset inactivity timer
-            }
-            buttonHeldFlag = false;
-        }
-        lastButtonState = currentButtonState;
-
-        // Avoid hogging the CPU
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-}
-
-// FreeRTOS task function to print current page
-void printCurrentPageTask(void *pvParameters) {
-    for (;;) {
-        Serial.print("Current Page: ");
-        Serial.println(currentPage);
-        vTaskDelay(pdMS_TO_TICKS(1000)); // Print every second
-    }
-}
+void touchTask(void *pvParameters);
 
 void setup() {
     Serial.begin(115200);
-
-    pinMode(ROTARY_ENCODER_BUTTON_PIN, INPUT_PULLUP);
-
-    // Initialize the rotary encoder
-    rotaryEncoder.begin();
-    rotaryEncoder.setup([]{ readEncoderISR(); });
-    rotaryEncoder.setBoundaries(0, 100, true);
-
-    // Disable acceleration
-    rotaryEncoder.setAcceleration(0);
-
-    // Initialize last encoder value
-    lastEncoderValue = rotaryEncoder.readEncoder();
-    lastButtonState  = true;
-
-    // Create the FreeRTOS tasks
-    xTaskCreate(rotaryTask, "RotaryTask", 2048, NULL, 1, NULL);
-    xTaskCreate(printCurrentPageTask, "PrintCurrentPageTask", 2048, NULL, 1, NULL);
-
-    // Initialize the LCD
+    Serial.println("ESPino32 Multi-Touch Sensor Ready!");
+    // Create FreeRTOS tasks
+    xTaskCreate(touchTask, "TouchTask", 2048, NULL, 1, NULL);
     lcd.init();
     lcd.backlight();
     lcd.setCursor(0, 0);
     lcd.print("WELCOME");
     lcd.setCursor(0, 1);
     lcd.print("Initializing...");
-    delay(2000);
+    delay(500);
+    currentState = HOME;
 }
 
 void loop() {
-    unsigned long currentTime = millis();
 
-    switch (currentState) {
-        case HOME:
+    switch (currentState){
+        case HOME:{
+            Serial.println("HOME malaew");
+            //display homepage
             lcdHomepage();
-            if (buttonHeldFlag) {
-                currentState = SELECT_CHANNEL;
-                lastActivityTime = currentTime;
+            if (buttonHeldFlag == true) {
+                //Serial.println("button held ma if laew jing jing na");
+                currentState = MODE_SELECT;
+            }
             }
             break;
-
-        case SELECT_CHANNEL:
-            selectChannel();
-            if (buttonPressedFlag) {
-                currentState = ADJUST_INTENSITY;
-                buttonPressedFlag = false;
-                lastActivityTime = currentTime;
-            } else if (currentTime - lastActivityTime > INACTIVITY_TIMEOUT) {
-                currentState = HOME;
+        case MODE_SELECT:{
+            State currentStateTemp = MODE_SELECT;
+            int ngo = 0;
+            Serial.println("MODE_SELECT ma leaw");
+                while(ngo ==0){
+                    if(rotateRightFlag){
+                        pageIndex++;
+                        if(pageIndex % 2 == 1){
+                            currentStateTemp = SELECT_CHANNEL_MODE;
+                            Serial.println("SELECT_CHANNEL_MODE ma leaw ror");
+                        }
+                        else if (pageIndex % 2 == 0)
+                        {
+                            currentStateTemp = ON_OFF_TIMER_MODE;
+                            Serial.println("ON_OFF_TIMER_MODE ma leaw ror");
+                        }
+                        
+                    }
+                    else if(rotateLeftFlag){
+                        pageIndex--;
+                        if(pageIndex % 2 == 1){
+                            currentStateTemp = SELECT_CHANNEL_MODE;
+                            Serial.println("SELECT_CHANNEL_MODE ma leaw rol");
+                        }
+                        else if (pageIndex % 2 == 0)
+                        {
+                            currentStateTemp = ON_OFF_TIMER_MODE;
+                            Serial.println("ON_OFF_TIMER_MODE ma leaw rol");
+                        }
+                    }
+                    else if (buttonPressFlag){
+                        ngo = 1;
+                        currentState = currentStateTemp;
+                        Serial.println(currentState);
+                        pageIndex = 0; //reset page index
+                    }
+                }
             }
             break;
-
-        case ADJUST_INTENSITY:
-            switch (selectedChannel) {
-                case 0:
-                    selectedChannel1();
-                    break;
-                case 1:
-                    selectedChannel2();
-                    break;
-                case 2:
-                    selectedChannel3();
-                    break;
-                case 3:
-                    selectedChannel4();
-                    break;
-                case 4:
-                    selectedChannel5();
-                    break;
+        case SELECT_CHANNEL_MODE:{
+            State currentStateTemp1 = SELECT_CHANNEL_MODE;
+            int ngo1 = 0;
+            Serial.println("SELECT_CHANNEL_MODE ma leaw");
+            while (ngo1 == 0){
+                if(rotateRightFlag){
+                    //increment index
+                    pageIndex++;
+                    if (pageIndex % 5 == 0){
+                        selectedChannel1();
+                        currentStateTemp1 = ADJUST_INTENSITY__CH1_MODE;
+                    }
+                    else if (pageIndex % 5 == 1){
+                        selectedChannel2();
+                        currentStateTemp1 = ADJUST_INTENSITY__CH2_MODE;
+                    }
+                    else if (pageIndex % 5 == 2){
+                        selectedChannel3();
+                        currentStateTemp1 = ADJUST_INTENSITY__CH3_MODE;
+                    }
+                    else if (pageIndex % 5 == 3){
+                        selectedChannel4();
+                        currentStateTemp1 = ADJUST_INTENSITY__CH4_MODE;
+                    }
+                    else if (pageIndex % 5 == 4){
+                        selectedChannel5();
+                        currentStateTemp1 = ADJUST_INTENSITY__CH5_MODE;
+                    }
+                }
+                else if(rotateLeftFlag){
+                    //decrement index
+                    pageIndex--;
+                    if (pageIndex % 5 == 0){
+                        selectedChannel1();
+                        currentStateTemp1 = ADJUST_INTENSITY__CH1_MODE;
+                    }
+                    else if (pageIndex % 5 == 1){
+                        selectedChannel2();
+                        currentStateTemp1 = ADJUST_INTENSITY__CH2_MODE;
+                    }
+                    else if (pageIndex % 5 == 2){
+                        selectedChannel3();
+                        currentStateTemp1 = ADJUST_INTENSITY__CH3_MODE;
+                    }
+                    else if (pageIndex % 5 == 3){
+                        selectedChannel4();
+                        currentStateTemp1 = ADJUST_INTENSITY__CH4_MODE;
+                    }
+                    else if (pageIndex % 5 == 4){
+                        selectedChannel5();
+                        currentStateTemp1 = ADJUST_INTENSITY__CH5_MODE;
+                    }
+                }
+                else if (buttonPressFlag){
+                    ngo1 = true;
+                    currentState = currentStateTemp1;
+                    Serial.println(currentState);
+                }
             }
-            if (buttonPressedFlag) {
-                buttonPressedFlag = false;
-                // Adjust intensity logic here
-                intensity++;
-                if (intensity > 100) intensity = 0;
-                lastActivityTime = currentTime;
-            } else if (rotateRightFlag) {
-                selectedChannel = (selectedChannel + 1) % 5;
-                rotateRightFlag = false;
-                lastActivityTime = currentTime;
-            } else if (rotateLeftFlag) {
-                selectedChannel = (selectedChannel - 1 + 5) % 5;
-                rotateLeftFlag = false;
-                lastActivityTime = currentTime;
-            } else if (currentTime - lastActivityTime > INACTIVITY_TIMEOUT) {
-                currentState = HOME;
-            }
+        }
+        break;
+        case ADJUST_INTENSITY__CH1_MODE:{
+            Serial.println("ADJUST_INTENSITY__CH1_MODE ma leaw");
+        }
+        break;
+        case ADJUST_INTENSITY__CH2_MODE:{
+            Serial.println("ADJUST_INTENSITY__CH2_MODE ma leaw");
+        }
+        break;
+        case ADJUST_INTENSITY__CH3_MODE:{
+            Serial.println("ADJUST_INTENSITY__CH3_MODE ma leaw");
+        }
+        break;
+        case ADJUST_INTENSITY__CH4_MODE:{
+            Serial.println("ADJUST_INTENSITY__CH4_MODE ma leaw");
+        }
+        break;
+        case ADJUST_INTENSITY__CH5_MODE:{
+            Serial.println("ADJUST_INTENSITY__CH5_MODE ma leaw");
+        }
+        break;
+        
+        case ON_OFF_TIMER_MODE:{
+            Serial.println("ON_OFF_TIMER_MODE ma leaw");
+        }
             break;
     }
+    delay(300);
+}
 
-    // Avoid hogging the CPU
-    delay(100);
+void touchTask(void *pvParameters) {
+    for (;;) {
+        int touch1 = touchRead(TOUCH_PIN_1); // Read GPIO 32
+        if (touch1 < TOUCH_THRESHOLD) {
+            rotateRightFlag = true;
+            Serial.println("TOUCH_PIN_1 touched rotating right");
+        } else {
+            rotateRightFlag = false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100)); // Delay for 500ms
+
+        int touch2 = touchRead(TOUCH_PIN_2); // Read GPIO 33
+        if (touch2 < TOUCH_THRESHOLD) {
+            rotateLeftFlag = true;
+            Serial.println("TOUCH_PIN_2 touched rotating left");
+        } else {
+            rotateLeftFlag = false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100)); // Delay for 500ms
+
+        int touch3 = touchRead(TOUCH_PIN_3); // Read GPIO 12
+        if (touch3 < TOUCH_THRESHOLD) {
+            buttonPressFlag = true;
+            Serial.println("TOUCH_PIN_3 touched button pressed");
+        } else {
+            buttonPressFlag = false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100)); // Delay for 500ms
+
+        int touch4 = touchRead(TOUCH_PIN_4); // Read GPIO 14
+        if (touch4 < TOUCH_THRESHOLD) {
+            buttonHeldFlag = true;
+            Serial.println("TOUCH_PIN_4 touched button held");
+        } else {
+            buttonHeldFlag = false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100)); // Delay for 500ms
+    }
 }
 
 void lcdHomepage(){
@@ -242,29 +239,25 @@ void lcdHomepage(){
     lcd.setCursor(0, 0);
     lcd.print("HOMEPAGE");
     lcd.setCursor(0, 1);
-    lcd.print("Channel: ");
-    lcd.print(channel);
+    lcd.print("Time: ");
+    lcd.print("13:00");
 }
 
 // Layer 2
 void selectChannel(){
     lcd.clear();
     lcd.setCursor(0, 0);
-    lcd.print("SELECT CHANNEL");
-    lcd.setCursor(0, 1);
-    lcd.print("Channel: ");
-    lcd.print(channel);
-}
-
-void onofftimer(){
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("ON/OFF TIMER");
-    lcd.setCursor(0, 1);
-    lcd.print(onoff);
+    lcd.print("<SELECT CHANNEL MODE>");
+    //lcd.print(channel);
 }
 
 // Layer 3
+void onofftimer(){
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("<ON/OFF TIMER>");
+}
+
 // Select channel
 void selectedChannel1(){
     lcd.clear();
@@ -272,7 +265,7 @@ void selectedChannel1(){
     lcd.print("Channel 1");
     lcd.setCursor(0, 1);
     lcd.print("Intensity: ");
-    lcd.print(intensity);
+    //lcd.print(intensity);
 }
 void selectedChannel2(){
     lcd.clear();
@@ -280,7 +273,7 @@ void selectedChannel2(){
     lcd.print("Channel 2");
     lcd.setCursor(0, 1);
     lcd.print("Intensity: ");
-    lcd.print(intensity);
+    //lcd.print(intensity);
 }
 void selectedChannel3(){
     lcd.clear();
@@ -288,7 +281,7 @@ void selectedChannel3(){
     lcd.print("Channel 3");
     lcd.setCursor(0, 1);
     lcd.print("Intensity: ");
-    lcd.print(intensity);
+    //lcd.print(intensity);
 }
 void selectedChannel4(){
     lcd.clear();
@@ -296,7 +289,7 @@ void selectedChannel4(){
     lcd.print("Channel 4");
     lcd.setCursor(0, 1);
     lcd.print("Intensity: ");
-    lcd.print(intensity);
+    //lcd.print(intensity);
 }
 void selectedChannel5(){
     lcd.clear();
@@ -304,5 +297,5 @@ void selectedChannel5(){
     lcd.print("Channel 5");
     lcd.setCursor(0, 1);
     lcd.print("Intensity: ");
-    lcd.print(intensity);
+    //lcd.print(intensity);
 }
