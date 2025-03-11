@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <AiEsp32RotaryEncoder.h>
 
 #define ROTARY_ENCODER_A_PIN        27
@@ -38,70 +40,74 @@ void IRAM_ATTR readEncoderISR() {
     rotaryEncoder.readEncoder_ISR();
 }
 
-void rotary_loop() {
-    // 1) Check for rotation (debounced)
-    if (rotaryEncoder.encoderChanged()) {
-        unsigned long currentTime = millis();
-        if (currentTime - lastKnobChange > DEBOUNCE_DELAY_KNOB) {
-            lastKnobChange = currentTime;
+void rotaryTask(void *pvParameters) {
+    for (;;) {
+        // 1) Check for rotation (debounced)
+        if (rotaryEncoder.encoderChanged()) {
+            unsigned long currentTime = millis();
+            if (currentTime - lastKnobChange > DEBOUNCE_DELAY_KNOB) {
+                lastKnobChange = currentTime;
 
-            long currentEncoderValue = rotaryEncoder.readEncoder();
-            if (currentEncoderValue > lastEncoderValue) {
-                rotateRightFlag = true;
-            } else if (currentEncoderValue < lastEncoderValue) {
-                rotateLeftFlag = true;
-            }
-            lastEncoderValue = currentEncoderValue;
-        }
-    }
-
-    // 2) Check for button press and long press
-    bool currentButtonState = (digitalRead(ROTARY_ENCODER_BUTTON_PIN) == LOW);
-
-    // Button went down
-    if (currentButtonState && !lastButtonState) {
-        buttonDownTime     = millis();
-        lastLongPressTime  = 0; // reset when freshly pressed
-    }
-
-    // Button is held down
-    if (currentButtonState) {
-        // Check if we've passed the initial long press time
-        if ((millis() - buttonDownTime) > LONG_PRESS_TIME) {
-            // Only trigger if at least 1 second has passed since the last long press event
-            if ((millis() - lastLongPressTime) > 1000) {
-                buttonLongPressedFlag = true;
-                lastLongPressTime     = millis();
+                long currentEncoderValue = rotaryEncoder.readEncoder();
+                if (currentEncoderValue > lastEncoderValue) {
+                    rotateRightFlag = true;
+                } else if (currentEncoderValue < lastEncoderValue) {
+                    rotateLeftFlag = true;
+                }
+                lastEncoderValue = currentEncoderValue;
             }
         }
-    }
 
-    // Button released
-    if (!currentButtonState && lastButtonState) {
-        unsigned long pressDuration = millis() - buttonDownTime;
-        // If it was not a long press, treat it as a short press
-        if (pressDuration < LONG_PRESS_TIME) {
-            buttonPressedFlag = true;
+        // 2) Check for button press and long press
+        bool currentButtonState = (digitalRead(ROTARY_ENCODER_BUTTON_PIN) == LOW);
+
+        // Button went down
+        if (currentButtonState && !lastButtonState) {
+            buttonDownTime     = millis();
+            lastLongPressTime  = 0; // reset when freshly pressed
         }
-    }
-    lastButtonState = currentButtonState;
 
-    // Print and reset flags
-    if (rotateRightFlag) {
-        Serial.println("Rotated Right");
-        rotateRightFlag = false;
-    }
-    if (rotateLeftFlag) {
-        Serial.println("Rotated Left");
-        rotateLeftFlag = false;
-    }
-    if (buttonPressedFlag) {
-        Serial.println("Button Pressed");
-        buttonPressedFlag = false;
-    }
-    if (buttonLongPressedFlag) {
-        Serial.println("Button Long Pressed");
-        buttonLongPressedFlag = false;
+        // Button is held down
+        if (currentButtonState) {
+            // Check if we've passed the initial long press time
+            if ((millis() - buttonDownTime) > LONG_PRESS_TIME) {
+                // Only trigger if at least 1 second has passed since the last long press event
+                if ((millis() - lastLongPressTime) > 1000) {
+                    buttonLongPressedFlag = true;
+                    lastLongPressTime     = millis();
+                }
+            }
+        }
+
+        // Button released
+        if (!currentButtonState && lastButtonState) {
+            unsigned long pressDuration = millis() - buttonDownTime;
+            // If it was not a long press, treat it as a short press
+            if (pressDuration < LONG_PRESS_TIME) {
+                buttonPressedFlag = true;
+            }
+        }
+        lastButtonState = currentButtonState;
+
+        // Print and reset flags
+        if (rotateRightFlag) {
+            Serial.println("Rotated Right");
+            rotateRightFlag = false;
+        }
+        if (rotateLeftFlag) {
+            Serial.println("Rotated Left");
+            rotateLeftFlag = false;
+        }
+        if (buttonPressedFlag) {
+            Serial.println("Button Pressed");
+            buttonPressedFlag = false;
+        }
+        if (buttonLongPressedFlag) {
+            Serial.println("Button Long Pressed");
+            buttonLongPressedFlag = false;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10)); // Small delay for stability
     }
 }
 
@@ -115,7 +121,7 @@ void setup(){
     // Set boundaries and acceleration
     bool circleValues = true;
     rotaryEncoder.setBoundaries(0, 100, circleValues);
-    rotaryEncoder.setAcceleration(250);
+    rotaryEncoder.setAcceleration(0);
 
     // Ensure the button pin is set as input (pull-up)
     pinMode(ROTARY_ENCODER_BUTTON_PIN, INPUT_PULLUP);
@@ -123,10 +129,12 @@ void setup(){
     // Initialize last encoder value
     lastEncoderValue = rotaryEncoder.readEncoder();
     lastButtonState  = true;
+
+    // Create FreeRTOS tasks
+    xTaskCreate(rotaryTask, "RotaryTask", 2048, NULL, 1, NULL);
 }
 
-void loop()
-{
-    rotary_loop();
-    delay(10);
+void loop() {
+    // Main loop can be used for other tasks or left empty
+    delay(1000);
 }
