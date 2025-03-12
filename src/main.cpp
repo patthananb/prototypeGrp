@@ -12,9 +12,9 @@
 #define EEPROM_SIZE 512
 #define EEPROM_ADDRESS 0
 
-#define ROTARY_ENCODER_A_PIN 27
-#define ROTARY_ENCODER_B_PIN 25
-#define ROTARY_ENCODER_BUTTON_PIN 26
+#define ROTARY_ENCODER_A_PIN 34
+#define ROTARY_ENCODER_B_PIN 35
+#define ROTARY_ENCODER_BUTTON_PIN 32
 #define ROTARY_ENCODER_STEPS 4
 
 
@@ -41,7 +41,8 @@ bool buttonPressFlag = false;
 bool buttonHeldFlag = false;
 
 int pageIndex = 0;
-int intensity[5];
+//initialize value of intensity
+int intensity[5] = {0, 0, 0, 0};
 
 //lcd functions protptype
 void lcdHomepage();
@@ -175,7 +176,7 @@ void setup()
     lcd.setCursor(0, 1);
     lcd.print("Initializing...");
     delay(500);
-    currentState = ADJUST_INTENSITY__CH1_MODE;
+    currentState = HOME;
 }
 
 void loop()
@@ -373,19 +374,7 @@ void loop()
     break;
     case ADJUST_INTENSITY__CH1_MODE:
     {
-        //Serial.println("ADJUST_INTENSITY__CH1_MODE ma leaw");
-        if(rotateLeftFlag || rotateRightFlag){
-            intensity[0] = constrain(rotaryEncoder.readEncoder(), 0, 100);
-            Serial.print("Intensity[0]: ");
-            Serial.println(intensity[0]);
-            resetflag();
-        }
-        else if(buttonPressFlag){
-            EEPROM.write(EEPROM_ADDRESS + 0, intensity[0]);
-            EEPROM.commit();
-            Serial.println("Intensity[0] stored in EEPROM");
-            buttonPressFlag = false;
-        }
+        Serial.println("ADJUST_INTENSITY__CH1_MODE ma leaw");
         resetflag();
     }
     break;
