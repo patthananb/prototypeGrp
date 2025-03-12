@@ -3,18 +3,20 @@
 #include <freertos/task.h>
 #include <LiquidCrystal_I2C.h>
 #include <AiEsp32RotaryEncoder.h>
+#include <EEPROM.h>
+// #define TOUCH_PIN_1 32 // GPIO 32
+// #define TOUCH_PIN_2 33 // GPIO 33
+// #define TOUCH_PIN_3 12 // GPIO 12
+// #define TOUCH_PIN_4 14 // GPIO 14
 
-#define TOUCH_PIN_1 32 // GPIO 32
-#define TOUCH_PIN_2 33 // GPIO 33
-#define TOUCH_PIN_3 12 // GPIO 12
-#define TOUCH_PIN_4 14 // GPIO 14
+#define EEPROM_SIZE 512
+#define EEPROM_ADDRESS 0
 
 #define ROTARY_ENCODER_A_PIN 27
 #define ROTARY_ENCODER_B_PIN 25
 #define ROTARY_ENCODER_BUTTON_PIN 26
 #define ROTARY_ENCODER_STEPS 4
 
-#define LONG_PRESS_TIME 1000
 
 // Track state
 static unsigned long lastKnobChange  = 0;
@@ -24,10 +26,13 @@ static unsigned long buttonDownTime  = 0;
 static unsigned long lastLongPressTime = 0;
 static unsigned long lastActivityTime = 0;
 
+#define LONG_PRESS_TIME 1000
 static const unsigned long DEBOUNCE_DELAY_KNOB = 50;
 static const unsigned long INACTIVITY_TIMEOUT = 10000;
+
 // Set a threshold based on your board's sensitivity
-#define TOUCH_THRESHOLD 30
+
+//#define TOUCH_THRESHOLD 30
 
 // Behavior flags
 bool rotateRightFlag = false;
@@ -36,17 +41,28 @@ bool buttonPressFlag = false;
 bool buttonHeldFlag = false;
 
 int pageIndex = 0;
+int intensity[5];
 
 //lcd functions protptype
 void lcdHomepage();
 void selectChannel();
 void onofftimer();
+
+void selectingChannel1();
+void selectingChannel2();
+void selectingChannel3();
+void selectingChannel4();
+void selectingChannel5();
+
 void selectedChannel1();
 void selectedChannel2();
 void selectedChannel3();
 void selectedChannel4();
 void selectedChannel5();
 void resetflag();
+
+void writeArrayToEEPROM(int arr[], int size);
+void readArrayFromEEPROM(int arr[], int size);
 
 enum State
 {
@@ -159,11 +175,28 @@ void setup()
     lcd.setCursor(0, 1);
     lcd.print("Initializing...");
     delay(500);
-    currentState = HOME;
+    currentState = ADJUST_INTENSITY__CH1_MODE;
 }
 
 void loop()
 {
+    if(Serial.available()){
+        String command = Serial.readStringUntil('\n');
+        if (command == "printinten")
+        {
+            Serial.println("EEPROM Values:");
+            for (int i = 0; i < 5; i++)
+            {
+                Serial.print("Intensity[");
+                Serial.print(i);
+                Serial.print("]: ");
+                Serial.println(intensity[i]);
+                Serial.println(EEPROM.read(EEPROM_ADDRESS + i));
+            }
+        }
+        
+    }
+    // for rotary encoder debugging
     // if(rotateLeftFlag){
     //     Serial.println("Rotated Left");
     //     resetflag();
@@ -262,27 +295,32 @@ void loop()
                 pageIndex++;
                 if (pageIndex % 5 == 0)
                 {
-                    selectedChannel1();
+                    Serial.println("SELECTING_CHANNEL_1 ma leaw ror");
+                    selectingChannel1();
                     currentStateTemp1 = ADJUST_INTENSITY__CH1_MODE;
                 }
                 else if (pageIndex % 5 == 1)
                 {
-                    selectedChannel2();
+                    Serial.println("SELECTING_CHANNEL_2 ma leaw ror");
+                    selectingChannel2();
                     currentStateTemp1 = ADJUST_INTENSITY__CH2_MODE;
                 }
                 else if (pageIndex % 5 == 2)
                 {
-                    selectedChannel3();
+                    Serial.println("SELECTING_CHANNEL_3 ma leaw ror");
+                    selectingChannel3();
                     currentStateTemp1 = ADJUST_INTENSITY__CH3_MODE;
                 }
                 else if (pageIndex % 5 == 3)
                 {
-                    selectedChannel4();
+                    Serial.println("SELECTING_CHANNEL_4 ma leaw ror");
+                    selectingChannel4();
                     currentStateTemp1 = ADJUST_INTENSITY__CH4_MODE;
                 }
                 else if (pageIndex % 5 == 4)
                 {
-                    selectedChannel5();
+                    Serial.println("SELECTING_CHANNEL_5 ma leaw ror");
+                    selectingChannel5();
                     currentStateTemp1 = ADJUST_INTENSITY__CH5_MODE;
                 }
                 resetflag();
@@ -293,27 +331,32 @@ void loop()
                 pageIndex--;
                 if (pageIndex % 5 == 0)
                 {
-                    selectedChannel1();
+                    Serial.println("SELECTING_CHANNEL_1 ma leaw rol");
+                    selectingChannel1();
                     currentStateTemp1 = ADJUST_INTENSITY__CH1_MODE;
                 }
                 else if (pageIndex % 5 == 1)
                 {
-                    selectedChannel2();
+                    Serial.println("SELECTING_CHANNEL_2 ma leaw rol");
+                    selectingChannel2();
                     currentStateTemp1 = ADJUST_INTENSITY__CH2_MODE;
                 }
                 else if (pageIndex % 5 == 2)
                 {
-                    selectedChannel3();
+                    Serial.println("SELECTING_CHANNEL_3 ma leaw rol");
+                    selectingChannel3();
                     currentStateTemp1 = ADJUST_INTENSITY__CH3_MODE;
                 }
                 else if (pageIndex % 5 == 3)
                 {
-                    selectedChannel4();
+                    Serial.println("SELECTING_CHANNEL_4 ma leaw rol");
+                    selectingChannel4();
                     currentStateTemp1 = ADJUST_INTENSITY__CH4_MODE;
                 }
                 else if (pageIndex % 5 == 4)
                 {
-                    selectedChannel5();
+                    Serial.println("SELECTING_CHANNEL_5 ma leaw rol");
+                    selectingChannel5();
                     currentStateTemp1 = ADJUST_INTENSITY__CH5_MODE;
                 }
                 resetflag();
@@ -330,7 +373,19 @@ void loop()
     break;
     case ADJUST_INTENSITY__CH1_MODE:
     {
-        Serial.println("ADJUST_INTENSITY__CH1_MODE ma leaw");
+        //Serial.println("ADJUST_INTENSITY__CH1_MODE ma leaw");
+        if(rotateLeftFlag || rotateRightFlag){
+            intensity[0] = constrain(rotaryEncoder.readEncoder(), 0, 100);
+            Serial.print("Intensity[0]: ");
+            Serial.println(intensity[0]);
+            resetflag();
+        }
+        else if(buttonPressFlag){
+            EEPROM.write(EEPROM_ADDRESS + 0, intensity[0]);
+            EEPROM.commit();
+            Serial.println("Intensity[0] stored in EEPROM");
+            buttonPressFlag = false;
+        }
         resetflag();
     }
     break;
@@ -369,7 +424,7 @@ void loop()
     }
     delay(100);
 }
-
+//for debugging purpose
 // void touchTask(void *pvParameters)
 // {
 //     for (;;)
@@ -451,6 +506,52 @@ void onofftimer()
     lcd.print("<ON/OFF TIMER>");
 }
 
+// Selecting channel
+void selectingChannel1()
+{
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("<Channel 1>");
+    lcd.setCursor(0, 1);
+    lcd.print("Intensity: ");
+    lcd.print(intensity[1]);
+}
+void selectingChannel2()
+{
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("<Channel 2>");
+    lcd.setCursor(0, 1);
+    lcd.print("Intensity: ");
+    lcd.print(intensity[2]);
+}
+void selectingChannel3()
+{
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("<Channel 3>");
+    lcd.setCursor(0, 1);
+    lcd.print("Intensity: ");
+    lcd.print(intensity[3]);
+}
+void selectingChannel4()
+{
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("<Channel 4>");
+    lcd.setCursor(0, 1);
+    lcd.print("Intensity: ");
+    lcd.print(intensity[4]);
+}
+void selectingChannel5()
+{
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("<Channel 5>");
+    lcd.setCursor(0, 1);
+    lcd.print("Intensity: ");
+    lcd.print(intensity[5]);
+}
 // Select channel
 void selectedChannel1()
 {
@@ -458,8 +559,8 @@ void selectedChannel1()
     lcd.setCursor(0, 0);
     lcd.print("Channel 1");
     lcd.setCursor(0, 1);
-    lcd.print("Intensity: ");
-    // lcd.print(intensity);
+    lcd.print("Intensity:");
+    lcd.print(intensity[1]);
 }
 void selectedChannel2()
 {
@@ -468,7 +569,7 @@ void selectedChannel2()
     lcd.print("Channel 2");
     lcd.setCursor(0, 1);
     lcd.print("Intensity: ");
-    // lcd.print(intensity);
+    lcd.print(intensity[2]);
 }
 void selectedChannel3()
 {
@@ -477,7 +578,7 @@ void selectedChannel3()
     lcd.print("Channel 3");
     lcd.setCursor(0, 1);
     lcd.print("Intensity: ");
-    // lcd.print(intensity);
+    lcd.print(intensity[3]);
 }
 void selectedChannel4()
 {
@@ -486,7 +587,7 @@ void selectedChannel4()
     lcd.print("Channel 4");
     lcd.setCursor(0, 1);
     lcd.print("Intensity: ");
-    // lcd.print(intensity);
+    lcd.print(intensity[4]);
 }
 void selectedChannel5()
 {
@@ -495,11 +596,30 @@ void selectedChannel5()
     lcd.print("Channel 5");
     lcd.setCursor(0, 1);
     lcd.print("Intensity: ");
-    // lcd.print(intensity);
+    lcd.print(intensity[5]);
 }
 void resetflag(){
     rotateLeftFlag = false;
     rotateRightFlag = false;
     buttonPressFlag = false;
     buttonHeldFlag = false;
+}
+void writeArrayToEEPROM(int arr[], int size) {
+    for (int i = 0; i < size; i++) {
+        EEPROM.write(EEPROM_ADDRESS + i, arr[i]);
+    }
+    EEPROM.commit();
+    Serial.println("Array stored in EEPROM");
+}
+
+void readArrayFromEEPROM(int arr[], int size) {
+    for (int i = 0; i < size; i++) {
+        arr[i] = EEPROM.read(EEPROM_ADDRESS + i);
+    }
+    Serial.println("Array read from EEPROM");
+    for (int i = 0; i < size; i++) {
+        Serial.print(arr[i]);
+        Serial.print(" ");
+    }
+    Serial.println();
 }

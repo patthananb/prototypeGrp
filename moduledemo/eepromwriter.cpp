@@ -12,9 +12,6 @@
 #define EEPROM_SIZE 512
 #define EEPROM_ADDRESS 0    
 
-#define DEBOUNCE_DELAY_KNOB 50
-#define LONG_PRESS_TIME 1000
-
 int intensity[5] = {0, 0, 0, 0, 0}; // Initialize intensity array
 
 AiEsp32RotaryEncoder rotaryEncoder = AiEsp32RotaryEncoder(ROTARY_ENCODER_A_PIN, ROTARY_ENCODER_B_PIN, ROTARY_ENCODER_STEPS);
@@ -46,10 +43,10 @@ void rotaryTask(void *pvParameters) {
                 long currentEncoderValue = rotaryEncoder.readEncoder();
                 if (currentEncoderValue > lastEncoderValue) {
                     rotateRightFlag = true;
-                    //Serial.println("Rotated Right");
+                    Serial.println("Rotated Right");
                 } else if (currentEncoderValue < lastEncoderValue) {
                     rotateLeftFlag = true;
-                    //Serial.println("Rotated Left");
+                    Serial.println("Rotated Left");
                 }
                 lastEncoderValue = currentEncoderValue;
                 lastActivityTime = millis(); // Reset inactivity timer
@@ -72,7 +69,7 @@ void rotaryTask(void *pvParameters) {
                 // Only trigger if at least 1 second has passed since last long press event
                 if ((millis() - lastLongPressTime) > 1000) {
                     buttonHeldFlag = true;
-                    //Serial.println("Button Held");
+                    Serial.println("Button Held");
                     lastLongPressTime = millis();
                     lastActivityTime = millis(); // Reset inactivity timer
                 }
@@ -85,7 +82,7 @@ void rotaryTask(void *pvParameters) {
             // If it was not a long press, treat it as a short press
             if (pressDuration < LONG_PRESS_TIME) {
                 buttonPressFlag = true;
-                //Serial.println("Button Pressed");
+                Serial.println("Button Pressed");
                 lastActivityTime = millis(); // Reset inactivity timer
             }
             buttonHeldFlag = false;
