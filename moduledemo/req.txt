@@ -1,0 +1,19 @@
+in this code its consist of 5 states
+enum State {
+    HOME,
+    MODE_SELECT,
+    SELECT_CHANNEL_MODE,
+    ON_OFF_TIMER_MODE,
+    ADJUST_INTENSITY_mode,
+};
+
+after setting up home page will be default state to return
+when in home page if longpressed and released it will enter 
+MODE_SELECT in this mode turning the knob(without any pressing the key button) 
+will cycle display through 
+SELECT_CHANNEL_MODE  (display selectChannel)
+and ON_OFF_TIMER_MODE (display onofftimer)
+if inactivity for 3 seconds return to home page but when the knob is 
+still turning stay in this mode
+
+
