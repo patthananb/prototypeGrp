@@ -4,7 +4,7 @@
 #include <LiquidCrystal_I2C.h>
 #include <AiEsp32RotaryEncoder.h>
 #include <EEPROM.h>
-
+ 
 // #define TOUCH_PIN_1 32 // GPIO 32
 // #define TOUCH_PIN_2 33 // GPIO 33
 // #define TOUCH_PIN_3 12 // GPIO 12
