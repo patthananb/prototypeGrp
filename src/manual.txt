@@ -1,0 +1,13 @@
+variables
+-intensity [ch1(0),ch2(1),ch3(2),ch4(3),ch5(4),mastervolume(5),mode(6)]
+
+functions
+- Lcd_adjustPWM(int value)
+    is for demo intensity while adjusting
+- PWM_Setting
+    is for initialize PWM pin
+-pwmAdjust
+    is for mapping and writing PWM to PWM pin
+-writeLED
+    is for force writing mapped intensity read from EEPROM to PWM pin
+    

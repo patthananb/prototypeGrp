@@ -4,16 +4,13 @@
 #include <LiquidCrystal_I2C.h>
 #include <AiEsp32RotaryEncoder.h>
 #include <EEPROM.h>
- 
-// #define TOUCH_PIN_1 32 // GPIO 32
-// #define TOUCH_PIN_2 33 // GPIO 33
-// #define TOUCH_PIN_3 12 // GPIO 12
-// #define TOUCH_PIN_4 14 // GPIO 14
 
 #define ROTARY_ENCODER_A_PIN 34
 #define ROTARY_ENCODER_B_PIN 35
 #define ROTARY_ENCODER_BUTTON_PIN 32
 #define ROTARY_ENCODER_STEPS 1
+
+#define PWM_FAN 14 // GPIO 14 for Fan PWM
 
 // Track state
 static unsigned long lastKnobChange = 0;
@@ -27,9 +24,6 @@ static unsigned long lastActivityTime = 0;
 static const unsigned long DEBOUNCE_DELAY_KNOB = 50;
 static const unsigned long INACTIVITY_TIMEOUT = 10000;
 
-// Set a threshold based on your board's sensitivity
-
-// #define TOUCH_THRESHOLD 30
 //  EEPORM address
 const int address_Intensity0 = 1; // address EEPROM
 const int address_Intensity1 = 2;
@@ -53,10 +47,9 @@ volatile bool buttonPressFlag = false;
 volatile bool buttonHeldFlag = false;
 volatile unsigned long buttonPressStartTime = 0; // เวลาที่เริ่มกดปุ่ม
 int pageIndex = 0;
-// initialize value of intensity
-int Intensity[7] = {23, 24, 25, 26, 0, 0, 0};
-int Intensity_Index = 0;
-int pwmIndex = 0;
+int Intensity[] = {};
+// [ch1, ch2, ch3, ch4, ch5, masterVolume, mode]
+
 // lcd functions protptype
 void lcdHomepage();
 void selectChannel();
@@ -73,6 +66,7 @@ void EEPROM_SET();
 void PWM_Setting();
 void writeArrayToEEPROM(int arr[], int size);
 void readArrayFromEEPROM(int arr[], int size);
+void writeLED();
 
 enum State
 {
@@ -92,7 +86,7 @@ State currentState = HOME;
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-//void touchTask(void *pvParameters);
+
 
 AiEsp32RotaryEncoder rotaryEncoder = AiEsp32RotaryEncoder(ROTARY_ENCODER_A_PIN, ROTARY_ENCODER_B_PIN, ROTARY_ENCODER_STEPS);
 
@@ -140,8 +134,8 @@ void IRAM_ATTR buttonISR()
 void setup()
 {
     Serial.begin(115200);
-    Serial.println("ESPino32 Multi-Touch Sensor Ready!");
     pinMode(ROTARY_ENCODER_BUTTON_PIN, INPUT_PULLUP);
+    pinMode(PWM_FAN, OUTPUT);
     PWM_Setting();
     resetflag();
     rotaryEncoder.begin();
@@ -152,12 +146,7 @@ void setup()
     lastButtonState = true;
     attachInterrupt(digitalPinToInterrupt(ROTARY_ENCODER_BUTTON_PIN), buttonISR, FALLING);
     EEPROM_SET();
-
-    // xTaskCreate(rotaryTask, "RotaryTask", 2048, NULL, 1, NULL);
-    //  Create FreeRTOS tasks
-    // xTaskCreate(touchTask, "TouchTask", 2048, NULL, 1, NULL);
     lcd.init();
-    //lcd.begin();
     lcd.backlight();
     lcd.setCursor(0, 0);
     lcd.print("WELCOME");
@@ -185,6 +174,22 @@ void loop()
     //         }
     //     }
     // }
+
+    /*
+        we need to multiply with factor MasterVolume to all index of intensity
+        trig fan pin to always on
+    */
+
+    // //master volume factor
+    // for (int i = 0; i < 5; i++)
+    // {
+    //     Intensity[i] = Intensity[i] * Intensity[5] / 100;
+    // }
+
+
+    writeLED();
+
+    digitalWrite(PWM_FAN, HIGH); // Turn the fan on
 
     switch (currentState)
     {
@@ -542,7 +547,7 @@ void loop()
     break;
     case ADJUST_INTENSITY__CH4_MODE:
     {
-        Serial.println("ADJUST_INTENSITY__CH1_MODE ma leaw");
+        Serial.println("ADJUST_INTENSITY__CH4_MODE ma leaw");
         // unsigned long previousTime = millis();  // จับเวลาครั้งแรก
         int ngo = 0;
         int PWM_Value;
@@ -590,7 +595,7 @@ void loop()
     break;
     case ADJUST_INTENSITY__CH5_MODE:
     {
-        Serial.println("ADJUST_INTENSITY__CH1_MODE ma leaw");
+        Serial.println("ADJUST_INTENSITY__CH5_MODE ma leaw");
         // unsigned long previousTime = millis();  // จับเวลาครั้งแรก
         int ngo = 0;
         int PWM_Value;
@@ -636,23 +641,21 @@ void loop()
         resetflag();
     }
     break;
+
     case ADJUST_INTENSITY_MASTER_VOLUME:
     {
         Serial.println("ADJUST_INTENSITY_MASTER_VOLUME ma leaw");
-        // unsigned long previousTime = millis();  // จับเวลาครั้งแรก
         int ngo = 0;
-        int PWM_Value;
-        PWM_Value = Intensity[4];
+        int masterVolume;
+        masterVolume = Intensity[4];
         lcd.clear();
         while (ngo == 0)
         {
-            PWM_Value = constrain(PWM_Value, 0, 100);
-            // int pre_pwm = PWM_Value;
-            // Serial.println(PWM_Value);
+            masterVolume = constrain(masterVolume, 0, 100);
             if (rotateRightFlag == true)
             {
-                PWM_Value++;
-                Serial.println(PWM_Value);
+                masterVolume++;
+                Serial.println(masterVolume);
                 resetflag();
                 lcd.setCursor(12, 0);
                 lcd.print("   "); // ลบค่าก่อนหน้า
@@ -661,8 +664,8 @@ void loop()
             }
             else if (rotateLeftFlag)
             {
-                PWM_Value--;
-                Serial.println(PWM_Value);
+                masterVolume--;
+                Serial.println(masterVolume);
                 resetflag();
                 lcd.setCursor(12, 0);
                 lcd.print("   "); // ลบค่าก่อนหน้า
@@ -670,19 +673,19 @@ void loop()
             }
             else if (buttonPressFlag)
             {
-                Intensity[4] = PWM_Value;
-                EEPROM.write(address_Intensity4, Intensity[4]);
+                Intensity[5] = masterVolume;
+                EEPROM.write(address_masterVolume, Intensity[5]);
                 EEPROM.commit();
 
                 currentState = SELECT_CHANNEL_MODE;
                 ngo = 1;
             }
-            pwmAdjust(4, PWM_Value);
-            Lcd_adjustPWM(PWM_Value);
+            Lcd_adjustPWM(masterVolume);
         }
 
         resetflag();
     }
+
     case ON_OFF_TIMER_MODE:
     {
         Serial.println("ON_OFF_TIMER_MODE ma leaw");
@@ -847,6 +850,7 @@ void PWM_Setting()
     ledcAttach(pwmLed5, pwmFreq, pwmResolution); // Set PWM on pin D5
 }
 
+//this functions is for demo intensity before saving
 void pwmAdjust(int channel, int value)
 {
     switch (channel)
@@ -878,3 +882,20 @@ void pwmAdjust(int channel, int value)
     break;
     }
 }
+
+void writeLED(){
+    ledcWrite(pwmLed1, map(Intensity[0], 0, 100, 0, 255));
+    ledcWrite(pwmLed2, map(Intensity[1], 0, 100, 0, 255));
+    ledcWrite(pwmLed3, map(Intensity[2], 0, 100, 0, 255));
+    ledcWrite(pwmLed4, map(Intensity[3], 0, 100, 0, 255));
+    ledcWrite(pwmLed5, map(Intensity[4], 0, 100, 0, 255));
+}
+
+void off(){
+    ledcWrite(pwmLed1, 0);
+    ledcWrite(pwmLed2, 0);
+    ledcWrite(pwmLed3, 0);
+    ledcWrite(pwmLed4, 0);
+    ledcWrite(pwmLed5, 0);
+}
+
