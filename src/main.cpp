@@ -116,7 +116,12 @@ class MyServerCallbacks : public BLEServerCallbacks {
     }
 };
 //[hr,min,0,0,set,0,mode]
-class RTCCallbacks : public BLECharacteristicCallbacks {
+ErriezDS3231 rtc; // Create DS3231 RTC object
+struct tm dt; // Global date/time object
+int ledHourOn = -1, ledMinOn = -1;  
+int ledHourOff = -1, ledMinOff = -1;
+bool ledTimeSet = false;  // Flag สำหรับตรวจสอบว่ากำหนดค่าเวลาเปิด/ปิดหรือยัง
+class MyCallbacks : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
         // รับข้อมูลจาก BLE Characteristic และตรวจสอบความยาวข้อมูล
         String receivedData = pCharacteristic->getValue();
@@ -171,11 +176,6 @@ class RTCCallbacks : public BLECharacteristicCallbacks {
     }
 };
 
-ErriezDS3231 rtc; // Create DS3231 RTC object
-struct tm dt; // Global date/time object
-int ledHourOn = -1, ledMinOn = -1;  
-int ledHourOff = -1, ledMinOff = -1;
-bool ledTimeSet = false;  // Flag สำหรับตรวจสอบว่ากำหนดค่าเวลาเปิด/ปิดหรือยัง
 
 AiEsp32RotaryEncoder rotaryEncoder = AiEsp32RotaryEncoder(ROTARY_ENCODER_A_PIN, ROTARY_ENCODER_B_PIN, ROTARY_ENCODER_STEPS);
 
