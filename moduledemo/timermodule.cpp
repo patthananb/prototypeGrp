@@ -1,6 +1,6 @@
 /***********************************************************************************************************
 การรับค่าจาก BLE ของฝั่ง  Client
-โดยจะเป็น array โครงสร้างดังนี้
+โดย array มีโครงสร้างดังนี้
 [hr,min,0,0,set,0,mode]
 set => 1 is on
     => 0 is off
@@ -21,86 +21,76 @@ mode ของ on/off คือ  2
 
 int ledHourOn = -1, ledMinOn = -1;  // ใช้ค่าเริ่มต้น -1 เพื่อบอกว่ายังไม่ได้ตั้งค่า
 int ledHourOff = -1, ledMinOff = -1;
-bool ledTimeSet = false;  // Flag สำหรับตรวจสอบว่าตั้งค่าหรือยัง
+bool ledTimeSet = false;  // Flag สำหรับตรวจสอบว่ากำหนดค่าเวลาเปิด/ปิดหรือยัง
 
 ErriezDS3231 rtc;
+
+// Define BLE characteristics
 BLEServer *pServer = NULL;
 BLECharacteristic *pCharacteristic = NULL;
 bool deviceConnected = false;
 void rtcInit();
+bool isLedOn(int currentHour, int currentMinute, int onHour, int onMinute, int offHour, int offMinute);
+bool ledState;
 
-class MyServerCallbacks : public BLEServerCallbacks {
-    void onConnect(BLEServer* pServer) {
-        deviceConnected = true;
-        Serial.println("Client Connected");
-    };
+// ฟังก์ชัน callback สำหรับสถานะการเชื่อมต่อ
+class MyServerCallbacks  : public BLEServerCallbacks {
+  void onConnect(BLEServer* pServer) {
+    deviceConnected = true; // ตั้งค่าสถานะว่าเชื่อมต่อแล้ว
+    Serial.println("Device connected!");
+  }
 
-    void onDisconnect(BLEServer* pServer) {
-        deviceConnected = false;
-        Serial.println("Client Disconnected, Restarting Advertising...");
-        delay(1000);
-        pServer->getAdvertising()->start();
-    }
+  void onDisconnect(BLEServer* pServer) {
+    deviceConnected = false; // ตั้งค่าสถานะว่าไม่ได้เชื่อมต่อ
+    Serial.println("Device disconnected!");
+  }
 };
 
 class MyCallbacks : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
-        // รับข้อมูลจาก BLE Characteristic และตรวจสอบความยาวข้อมูล
         String receivedData = pCharacteristic->getValue();
-        int len = receivedData.length();
-
-        // ตรวจสอบว่าข้อมูลต้องมีความยาว 7 ไบต์
-        if (len == 7) {  
-            uint8_t data[len];
-            memcpy(data, receivedData.c_str(), len); // คัดลอกข้อมูลไปยังอาร์เรย์ data
-
-            // ดึงค่าต่างๆ จากข้อมูลที่ได้รับ
-            int hr = data[0];      // ชั่วโมง
-            int min = data[1];     // นาที
-            int set = data[4];     // กำหนดว่าเป็นการตั้งค่าเปิด (1) หรือปิด (0)
-            int mode = data[6];    // โหมดของคำสั่ง 
-
-            Serial.print("Received mode: ");
-            Serial.println(mode);
-
-            // ตรวจสอบว่า mode เป็น 2 
-            if (mode == 2) {
-                if (set == 1) { // ตั้งเวลาเปิด LED
-                    // ตรวจสอบว่าเวลาเปิดต้องไม่ตรงกับเวลาปิด
-                    if (hr == ledHourOff && min == ledMinOff) {
-                        Serial.println("Error: ON time cannot be the same as OFF time!");
-                        return; // ออกจากฟังก์ชันหากเวลาเปิดตรงกับเวลาปิด
-                    }
-                    ledHourOn = hr;
-                    ledMinOn = min;
-                    Serial.print("LED ON time set to: ");
-                } else if (set == 0) { // ตั้งเวลาปิด LED
-                    // ตรวจสอบว่าเวลาปิดต้องไม่ตรงกับเวลาเปิด
-                    if (hr == ledHourOn && min == ledMinOn) {
-                        Serial.println("Error: OFF time cannot be the same as ON time!");
-                        return; // ออกจากฟังก์ชันหากเวลาปิดตรงกับเวลาเปิด
-                    }
-                    ledHourOff = hr;
-                    ledMinOff = min;
-                    Serial.print("LED OFF time set to: ");
-                }
-                // แสดงเวลาที่ตั้งค่า
-                Serial.printf("%02d:%02d\n", hr, min);
-
-                // ตั้งค่าให้ LED ทำงานตามกำหนดเวลา
-                ledTimeSet = true;
-            } else {
-                Serial.println("Invalid mode received!"); // แจ้งเตือนหาก mode ไม่ถูกต้อง
-            }
-        } else {
-            Serial.println("Invalid data length!"); // แจ้งเตือนหากข้อมูลที่ได้รับมีความยาวไม่ถูกต้อง
+        if (receivedData.length() != 7) {
+            Serial.println("Invalid data length!");
+            return;
         }
+
+        uint8_t data[7];
+        memcpy(data, receivedData.c_str(), 7);
+
+        int hr = data[0];
+        int min = data[1];
+        int set = data[4];
+        int mode = data[6];
+
+        Serial.printf("Received mode: %d\n", mode);
+
+        if (mode == 2) {
+            if (set == 1) {
+                if (hr == ledHourOff && min == ledMinOff) {
+                    Serial.println("Error: ON time and OFF time cannot be the same!");
+                    return;
+                    }
+                ledHourOn = hr;
+                ledMinOn = min;
+                Serial.printf("LED ON time set to: %02d:%02d\n", hr, min);
+            } else if (set == 0) {
+                if (hr == ledHourOn && min == ledMinOn) {
+                    Serial.println("Error: ON time and OFF time cannot be the same!");
+                    return;
+                    }
+                ledHourOff = hr;
+                ledMinOff = min;
+                Serial.printf("LED OFF time set to: %02d:%02d\n", hr, min);
+            }
+          ledTimeSet = true;
+        } else {
+            Serial.println("Invalid mode received!");
+            }
     }
 };
 
 void setup() { 
     Serial.begin(115200);
-    Serial.println(F("\nErriez DS3231 RTC Set Time and LED Control with BLE\n"));
 
     // เริ่มต้น I2C
     Wire.begin();
@@ -114,26 +104,28 @@ void setup() {
 
     // เริ่มต้น BLE
     BLEDevice::init("ESP32_BLE");
-    pServer = BLEDevice::createServer();
+    // สร้าง BLE server และตั้งค่า callback สำหรับสถานะการเชื่อมต่อ
+    BLEServer *pServer = BLEDevice::createServer();
     pServer->setCallbacks(new MyServerCallbacks());
 
-    BLEService *pService = pServer->createService(BLEUUID(SERVICE_UUID));
-    pCharacteristic = pService->createCharacteristic(
-        CHARACTERISTIC_UUID_WRITE,
-        BLECharacteristic::PROPERTY_WRITE
-    );
-    
-    pCharacteristic->setCallbacks(new MyCallbacks());
-    pService->start();
+    // สร้าง BLE service
+    BLEService *pService = pServer->createService(SERVICE_UUID);
 
-    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-    pAdvertising->addServiceUUID(SERVICE_UUID);
-    pAdvertising->setScanResponse(true);
-    pAdvertising->setMinPreferred(0x06);
-    pAdvertising->setMinPreferred(0x12);
-    BLEDevice::startAdvertising();
+    // สร้าง BLE characteristic ที่สามารถอ่าน เขียน และแจ้งเตือน
+pCharacteristic = pService->createCharacteristic(
+    CHARACTERISTIC_UUID_WRITE,
+    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+);
 
-    Serial.println("Waiting for client connection...");
+  pCharacteristic->setCallbacks(new MyCallbacks());
+  // เริ่มต้นการทำงานของ service และเริ่มโฆษณา (advertise)
+  pService->start();
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
 }
 
 void loop() {
@@ -150,35 +142,19 @@ void loop() {
     // ดึงค่าชั่วโมงและนาทีปัจจุบันจากโครงสร้างเวลา
     int currentHour = dt.tm_hour;
     int currentMinute = dt.tm_min;
-
-
     Serial.printf("Current Time: %02d:%02d\n", currentHour, currentMinute);
 
     if (ledTimeSet) {  // ตรวจสอบว่ามีการตั้งค่าเวลาหรือยัง
         Serial.printf("ON Time: %02d:%02d\n", ledHourOn, ledMinOn);
         Serial.printf("OFF Time: %02d:%02d\n", ledHourOff, ledMinOff);
 
-        bool ledState = isLedOn(currentHour, currentMinute, ledHourOn, ledMinOn, ledHourOff, ledMinOff);
+        ledState = isLedOn(currentHour, currentMinute, ledHourOn, ledMinOn, ledHourOff, ledMinOff);
         digitalWrite(LED_PIN, ledState ? HIGH : LOW);
 
         Serial.print("LED State: ");
         Serial.println(ledState ? "ON" : "OFF");
     } else {
         Serial.println("Waiting for LED time setup...");
-    }
-
-    // ตัวแปร static ใช้เก็บสถานะการโฆษณา BLE
-    static bool isAdvertising = true;
-    
-    // ตรวจสอบว่าไม่มีอุปกรณ์เชื่อมต่อและ BLE ยังไม่ได้เริ่มโฆษณาใหม่
-    if (!deviceConnected && !isAdvertising) {
-        Serial.println("Restarting BLE Advertising..."); // แจ้งเตือนใน Serial Monitor
-        BLEDevice::startAdvertising(); // เริ่มโฆษณา BLE ใหม่
-        isAdvertising = true; // อัปเดตสถานะว่ากำลังโฆษณา
-    } 
-    // ตรวจสอบว่ามีอุปกรณ์เชื่อมต่อแล้ว
-    else if (deviceConnected) {
-        isAdvertising = false; // หยุดโฆษณา BLE
     }
     delay(1000);
 }
@@ -198,7 +174,7 @@ bool isLedOn(int currentHour, int currentMinute, int onHour, int onMinute, int o
     if (onMinutes < offMinutes) {  
         // กรณีช่วงเวลาเปิด-ปิดอยู่ภายในวันเดียวกัน (เช่น 08:00 - 20:00)
         return (currentMinutes >= onMinutes && currentMinutes < offMinutes);
-    } else {
+    } else {  
         // กรณีช่วงเวลาเปิด-ปิดคร่อมข้ามเที่ยงคืน (เช่น 22:00 - 06:00)
         return (currentMinutes >= onMinutes || currentMinutes < offMinutes);
     }
