@@ -98,7 +98,21 @@ void setup() {
 
     // เรียกใช้งาน RTC
     rtcInit();
+    struct tm dt;
+    if (!rtc.read(&dt)) {
+        Serial.println("RTC is not set! Setting default time...");
 
+        // ใช้เวลาปัจจุบันจากคอมพิวเตอร์
+        struct tm compileTime = {0};
+        strptime(__DATE__ " " __TIME__, "%b %d %Y %H:%M:%S", &compileTime);
+
+        // ตั้งค่า RTC
+        rtc.write(&compileTime);
+
+        Serial.printf("RTC Set to: %04d-%02d-%02d %02d:%02d:%02d\n",
+                      compileTime.tm_year + 1900, compileTime.tm_mon + 1, compileTime.tm_mday,
+                      compileTime.tm_hour, compileTime.tm_min, compileTime.tm_sec);
+    }
     // ตั้งค่าโหมดขา LED
     pinMode(LED_PIN, OUTPUT);
 
@@ -129,9 +143,7 @@ pCharacteristic = pService->createCharacteristic(
 }
 
 void loop() {
-    // สร้างตัวแปรโครงสร้าง tm เพื่อเก็บข้อมูลวันที่และเวลา
-    struct tm dt;
-    
+    struct tm dt = {0};
     // อ่านค่าจาก RTC ถ้าล้มเหลวให้แสดงข้อความและออกจากฟังก์ชัน
     if (!rtc.read(&dt)) {
         Serial.println("Failed to read RTC"); // แจ้งเตือนว่าอ่านค่า RTC ไม่สำเร็จ
@@ -181,9 +193,11 @@ bool isLedOn(int currentHour, int currentMinute, int onHour, int onMinute, int o
 }
 
 void rtcInit() {
-    while (!rtc.begin()) {
-        Serial.println(F("RTC not found"));
-        delay(3000);
+    if (!rtc.begin()) {
+        Serial.println(F("RTC not found! Please check connection."));
+        while (1); // หยุดโปรแกรมถ้า RTC ไม่ทำงาน
+    } else {
+        Serial.println(F("RTC Initialized Successfully!"));
     }
     rtc.clockEnable(true);
     rtc.setSquareWave(SquareWaveDisable);
