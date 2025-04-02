@@ -193,11 +193,9 @@ bool isLedOn(int currentHour, int currentMinute, int onHour, int onMinute, int o
 }
 
 void rtcInit() {
-    if (!rtc.begin()) {
-        Serial.println(F("RTC not found! Please check connection."));
-        while (1); // หยุดโปรแกรมถ้า RTC ไม่ทำงาน
-    } else {
-        Serial.println(F("RTC Initialized Successfully!"));
+    while (!rtc.begin()) {
+        Serial.println(F("RTC not found"));
+        delay(3000);
     }
     rtc.clockEnable(true);
     rtc.setSquareWave(SquareWaveDisable);
