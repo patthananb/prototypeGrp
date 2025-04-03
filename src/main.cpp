@@ -9,6 +9,9 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <Wire.h>
+#include <ErriezDS3231.h>
+ErriezDS3231 rtc;
+void rtcInit();
 
 #define SERVICE_UUID "12345678-1234-5678-1234-56789abcdef0"
 #define CHARACTERISTIC_UUID_WRITE "87654321-4321-6789-4321-abcdef012345"
@@ -29,17 +32,26 @@ class MyServerCallbacks  : public BLEServerCallbacks {
     Serial.println("Device disconnected!");
   }
 };
-int Intensity[5] = {};
+int Intensity[6] = {};
 uint8_t data[7];
 int modeTO;
+
 class MyCallbacks : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
-        String receivedData = pCharacteristic->getValue();
-        if (receivedData.length() != 7) {
-            Serial.println("Invalid data length!");
-            return;
-        }
-        memcpy(data, receivedData.c_str(), 7);
+        String value = pCharacteristic->getValue();
+        Serial.print("Received: ");
+        Serial.println(value);
+
+        if (value.length() > 3 && value.startsWith("CH")) {
+            int channel = value.charAt(2) - '0';
+            int chValue = value.substring(4).toInt();
+
+            Serial.print("CH");
+            Serial.print(channel);
+            Serial.print(": ");
+            Serial.println(chValue);
+            Intensity[channel] = chValue;           
+        }  
     };
 };
 #define ROTARY_ENCODER_A_PIN 34
@@ -150,6 +162,7 @@ void IRAM_ATTR readEncoderISR()
         }
         lastPosition = currentPosition; // อัปเดตตำแหน่งล่าสุด
     }
+    
 }
 void IRAM_ATTR buttonISR()
 {
@@ -169,6 +182,17 @@ void IRAM_ATTR buttonISR()
 void setup()
 {
     Serial.begin(115200);
+    Serial.println("setup aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    // เริ่มต้น I2C
+    Wire.begin();
+    Wire.setClock(100000);
+    rtcInit();
+
+    //อัปเดตเวลาของ RTC ให้ตรงกับเวลาที่คอมพิวเตอร์
+    //struct tm compileTime = {0};
+    //strptime(__DATE__ " " __TIME__, "%b %d %Y %H:%M:%S", &compileTime);
+    //rtc.write(&compileTime);
+
     pinMode(ROTARY_ENCODER_BUTTON_PIN, INPUT_PULLUP);
     pinMode(PWM_FAN, OUTPUT);
     PWM_Setting();
@@ -249,48 +273,19 @@ void loop()
 
 
     //writeLED();
-   
-    digitalWrite(PWM_FAN, HIGH); // Turn the fan on
-    modeTO = data[6];
-    switch (modeTO) {
-    case 1:
-        for (int i = 0; i < 5; i++) {
-            Intensity[i] = data[i];
-        }
-        writeLED();
-        break;
-    /*  
-    case 2: {
-        int hr = data[0];
-        int min = data[1];
-        int set = data[4];
-        int mode = data[6];
+    
+    struct tm dt = {0};
+    // อ่านค่าจาก RTC ถ้าล้มเหลวให้แสดงข้อความและออกจากฟังก์ชัน
+    if (!rtc.read(&dt)) {
+        Serial.println("Failed to read RTC"); // แจ้งเตือนว่าอ่านค่า RTC ไม่สำเร็จ
+        delay(1000); 
+        return; 
+    }
 
-        if (set == 1) {
-            if (hr == ledHourOff && min == ledMinOff) {
+    digitalWrite(PWM_FAN, HIGH); // Turn the fan on
+    rOn && min == ledMinOn) {
                 Serial.println("Error: ON time and OFF time cannot be the same!");
                 return;
-            }
-            ledHourOn = hr;
-            ledMinOn = min;
-            Serial.printf("LED ON time set to: %02d:%02d\n", hr, min);
-        } else if (set == 0) {
-            if (hr == ledHourOn && min == ledMinOn) {
-                Serial.println("Error: ON time and OFF time cannot be the same!");
-                return;
-            }
-            ledHourOff = hr;
-            ledMinOff = min;
-            Serial.printf("LED OFF time set to: %02d:%02d\n", hr, min);
-        }
-        ledTimeSet = true;
-        break;
-    }
-    */
-    default:
-        Serial.println("Invalid mode received!");
-        break;
-    }
 
     switch (currentState)
     {
@@ -803,9 +798,25 @@ void lcdHomepage()
     // lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("HOMEPAGE");
+
     lcd.setCursor(0, 1);
     lcd.print("Time: ");
-    lcd.print("13:00");
+    
+    struct tm dt = {0};
+    // อ่านค่าจาก RTC ถ้าล้มเหลวให้แสดงข้อความและออกจากฟังก์ชัน
+    if (!rtc.read(&dt)) {
+        Serial.println("Failed to read RTC"); // แจ้งเตือนว่าอ่านค่า RTC ไม่สำเร็จ
+        delay(1000); 
+        return; 
+    }
+    int currentHour = dt.tm_hour;
+    int currentMinute = dt.tm_min;
+    
+    char timeStr[10];  // Buffer สำหรับเก็บข้อความเวลา
+    sprintf(timeStr, "%02d:%02d", currentHour, currentMinute);
+
+    lcd.setCursor(6, 1); // จัดตำแหน่งให้เหมาะสม
+    lcd.print(timeStr);
 }
 
 // Layer 2
@@ -998,4 +1009,13 @@ void off(){
     ledcWrite(pwmLed3, 0);
     ledcWrite(pwmLed4, 0);
     ledcWrite(pwmLed5, 0);
+}
+
+void rtcInit() {
+    while (!rtc.begin()) {
+        Serial.println(F("RTC not found"));
+        delay(3000);
+    }
+    rtc.clockEnable(true);
+    rtc.setSquareWave(SquareWaveDisable);
 }
