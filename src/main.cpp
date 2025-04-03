@@ -47,7 +47,7 @@ volatile bool buttonPressFlag = false;
 volatile bool buttonHeldFlag = false;
 volatile unsigned long buttonPressStartTime = 0; // เวลาที่เริ่มกดปุ่ม
 int pageIndex = 0;
-int Intensity[] = {};
+int Intensity[5] = {};
 // [ch1, ch2, ch3, ch4, ch5, masterVolume, mode]
 
 // lcd functions protptype
@@ -187,7 +187,7 @@ void loop()
     // }
 
 
-    writeLED();
+    //writeLED();
 
     digitalWrite(PWM_FAN, HIGH); // Turn the fan on
 
@@ -857,27 +857,27 @@ void pwmAdjust(int channel, int value)
     {
     case 0:
     {
-        ledcWrite(pwmLed1, map(value, 0, 100, 0, 255));
+        ledcWrite(pwmLed1, map(value, 0, 100, 0, 190));
     }
     break;
     case 1:
     {
-        ledcWrite(pwmLed2, map(value, 0, 100, 0, 255));
+        ledcWrite(pwmLed2, map(value, 0, 100, 0, 190));
     }
     break;
     case 2:
     {
-        ledcWrite(pwmLed3, map(value, 0, 100, 0, 255));
+        ledcWrite(pwmLed3, map(value, 0, 100, 0, 190));
     }
     break;
     case 3:
     {
-        ledcWrite(pwmLed4, map(value, 0, 100, 0, 255));
+        ledcWrite(pwmLed4, map(value, 0, 100, 0, 190));
     }
     break;
     case 4:
     {
-        ledcWrite(pwmLed5, map(value, 0, 100, 0, 255));
+        ledcWrite(pwmLed5, map(value, 0, 100, 0, 190));
     }
     break;
     }
@@ -898,4 +898,3 @@ void off(){
     ledcWrite(pwmLed4, 0);
     ledcWrite(pwmLed5, 0);
 }
-
