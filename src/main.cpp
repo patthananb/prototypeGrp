@@ -13,6 +13,12 @@
 ErriezDS3231 rtc;
 void rtcInit();
 
+int ledHourOn = -1, ledMinOn = -1;  // ใช้ค่าเริ่มต้น -1 เพื่อบอกว่ายังไม่ได้ตั้งค่า
+int ledHourOff = -1, ledMinOff = -1;
+bool ledTimeSet = false;  // Flag สำหรับตรวจสอบว่ากำหนดค่าเวลาเปิด/ปิดหรือยัง
+bool isLedOn(int currentHour, int currentMinute, int onHour, int onMinute, int offHour, int offMinute);
+bool ledState;
+
 #define SERVICE_UUID "12345678-1234-5678-1234-56789abcdef0"
 #define CHARACTERISTIC_UUID_WRITE "87654321-4321-6789-4321-abcdef012345"
 // Define BLE characteristics
@@ -35,6 +41,22 @@ class MyServerCallbacks  : public BLEServerCallbacks {
 int Intensity[6] = {};
 uint8_t data[7];
 int modeTO;
+//  EEPORM address
+const int address_Intensity0 = 1; // address EEPROM
+const int address_Intensity1 = 2;
+const int address_Intensity2 = 3;
+const int address_Intensity3 = 4;
+const int address_Intensity4 = 5;
+const int address_masterVolume = 6;
+
+const int pwmLed2 = 27;      // GPIO27 for PWM
+const int pwmLed5 = 12;      // GPIO12 for PWM
+const int pwmLed4 = 26;      // GPIO26 for PWM
+const int pwmLed3 = 25;      // GPIO25 for PWM
+const int pwmLed1 = 33;      // GPIO33 for PWM
+const int pwmFreq = 20000;   // Frequency 20 kHz
+const int pwmResolution = 8; // 8-bit resolution (0-255)
+const int pwmLedM[5] = {pwmLed1, pwmLed2, pwmLed3, pwmLed4, pwmLed5}; 
 
 class MyCallbacks : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
@@ -50,8 +72,10 @@ class MyCallbacks : public BLECharacteristicCallbacks {
             Serial.print(channel);
             Serial.print(": ");
             Serial.println(chValue);
-            Intensity[channel] = chValue;           
-        }  
+            Intensity[channel] = chValue;
+            ledcWrite(pwmLedM[channel],map(chValue, 0, 100, 0, 255));           
+        }
+
     };
 };
 #define ROTARY_ENCODER_A_PIN 34
@@ -72,22 +96,6 @@ static unsigned long lastActivityTime = 0;
 #define LONG_PRESS_TIME 1000
 static const unsigned long DEBOUNCE_DELAY_KNOB = 50;
 static const unsigned long INACTIVITY_TIMEOUT = 10000;
-
-//  EEPORM address
-const int address_Intensity0 = 1; // address EEPROM
-const int address_Intensity1 = 2;
-const int address_Intensity2 = 3;
-const int address_Intensity3 = 4;
-const int address_Intensity4 = 5;
-const int address_masterVolume = 6;
-
-const int pwmLed2 = 27;      // GPIO27 for PWM
-const int pwmLed5 = 12;      // GPIO12 for PWM
-const int pwmLed4 = 26;      // GPIO26 for PWM
-const int pwmLed3 = 25;      // GPIO25 for PWM
-const int pwmLed1 = 33;      // GPIO33 for PWM
-const int pwmFreq = 20000;   // Frequency 20 kHz
-const int pwmResolution = 8; // 8-bit resolution (0-255)
 
 // Behavior flags
 volatile bool rotateLeftFlag = false;
@@ -273,6 +281,10 @@ void loop()
 
 
     //writeLED();
+
+    for (int i = 0; i < 5; i++) {
+            Intensity[i] = Intensity[i] * Intensity[5] / 100;
+    }
     
     struct tm dt = {0};
     // อ่านค่าจาก RTC ถ้าล้มเหลวให้แสดงข้อความและออกจากฟังก์ชัน
@@ -283,9 +295,6 @@ void loop()
     }
 
     digitalWrite(PWM_FAN, HIGH); // Turn the fan on
-    rOn && min == ledMinOn) {
-                Serial.println("Error: ON time and OFF time cannot be the same!");
-                return;
 
     switch (currentState)
     {
