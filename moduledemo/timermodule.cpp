@@ -98,20 +98,13 @@ void setup() {
 
     // เรียกใช้งาน RTC
     rtcInit();
-    struct tm dt;
-    if (!rtc.read(&dt)) {
-        Serial.println("RTC is not set! Setting default time...");
-
-        // ใช้เวลาปัจจุบันจากคอมพิวเตอร์
-        struct tm compileTime = {0};
-        strptime(__DATE__ " " __TIME__, "%b %d %Y %H:%M:%S", &compileTime);
-
-        // ตั้งค่า RTC
-        rtc.write(&compileTime);
-
-        Serial.printf("RTC Set to: %04d-%02d-%02d %02d:%02d:%02d\n",
-                      compileTime.tm_year + 1900, compileTime.tm_mon + 1, compileTime.tm_mday,
-                      compileTime.tm_hour, compileTime.tm_min, compileTime.tm_sec);
+    struct tm dt = {0};
+    if (rtc.read(&dt)) {
+        Serial.printf("RTC Time: %04d-%02d-%02d %02d:%02d:%02d\n",
+                  dt.tm_year + 1900, dt.tm_mon + 1, dt.tm_mday,
+                  dt.tm_hour, dt.tm_min, dt.tm_sec);
+    } else {
+        Serial.println("Failed to read RTC");
     }
     // ตั้งค่าโหมดขา LED
     pinMode(LED_PIN, OUTPUT);
