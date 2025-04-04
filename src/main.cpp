@@ -15,6 +15,7 @@ void rtcInit();
 
 int ledHourOn = -1, ledMinOn = -1;  // ใช้ค่าเริ่มต้น -1 เพื่อบอกว่ายังไม่ได้ตั้งค่า
 int ledHourOff = -1, ledMinOff = -1;
+int currentHour ,currentMinute ;
 bool ledTimeSet = false;  // Flag สำหรับตรวจสอบว่ากำหนดค่าเวลาเปิด/ปิดหรือยัง
 bool isLedOn(int currentHour, int currentMinute, int onHour, int onMinute, int offHour, int offMinute);
 bool ledState;
@@ -58,26 +59,74 @@ const int pwmFreq = 20000;   // Frequency 20 kHz
 const int pwmResolution = 8; // 8-bit resolution (0-255)
 const int pwmLedM[5] = {pwmLed1, pwmLed2, pwmLed3, pwmLed4, pwmLed5}; 
 
+#define MAX_CHANNELS 6
 class MyCallbacks : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
         String value = pCharacteristic->getValue();
         Serial.print("Received: ");
         Serial.println(value);
 
+        // ตรวจสอบรูปแบบ CHX:YY
         if (value.length() > 3 && value.startsWith("CH")) {
             int channel = value.charAt(2) - '0';
             int chValue = value.substring(4).toInt();
 
-            Serial.print("CH");
-            Serial.print(channel);
-            Serial.print(": ");
-            Serial.println(chValue);
-            Intensity[channel] = chValue;
-            ledcWrite(pwmLedM[channel],map(chValue, 0, 100, 0, 255));           
+            if (channel >= 0 && channel < MAX_CHANNELS) { // ป้องกัน index ผิดพลาด
+                Serial.printf("CH%d: %d\n", channel, chValue);
+                Intensity[channel] = chValue;
+                ledcWrite(pwmLedM[channel], map(chValue, 0, 100, 0, 255));
+            } else {
+                Serial.println("Error: Invalid channel number!");
+            }
+            return;
         }
 
-    };
+        // ตรวจสอบว่าเป็น comma-separated values (CSV)
+        int data[7] = {0};
+        int index = 0;
+        char *token = strtok((char *)value.c_str(), ",");
+        while (token != NULL && index < 7) {
+            data[index++] = atoi(token);
+            token = strtok(NULL, ",");
+        }
+
+        if (index == 7) { // ตรวจสอบว่ามีค่าครบ 7 ตัว
+            int hr = data[0];
+            int min = data[1];
+            int set = data[4];
+            int mode = data[6];
+
+            Serial.printf("Received mode: %d\n", mode);
+
+            if (mode == 2) {
+                if (set == 1) {
+                    if (hr == ledHourOff && min == ledMinOff) {
+                        Serial.println("Error: ON time and OFF time cannot be the same!");
+                        return;
+                    }
+                    ledHourOn = hr;
+                    ledMinOn = min;
+                    Serial.printf("LED ON time set to: %02d:%02d\n", hr, min);
+                } 
+                else if (set == 0) {
+                    if (hr == ledHourOn && min == ledMinOn) {
+                        Serial.println("Error: ON time and OFF time cannot be the same!");
+                        return;
+                    }
+                    ledHourOff = hr;
+                    ledMinOff = min;
+                    Serial.printf("LED OFF time set to: %02d:%02d\n", hr, min);
+                }
+                ledTimeSet = true;
+            } 
+            else {
+                Serial.println("Invalid mode received!");
+            }
+        }
+    }
 };
+
+
 #define ROTARY_ENCODER_A_PIN 34
 #define ROTARY_ENCODER_B_PIN 35
 #define ROTARY_ENCODER_BUTTON_PIN 32
@@ -293,7 +342,20 @@ void loop()
         delay(1000); 
         return; 
     }
+    if (ledTimeSet) { 
+         // ตรวจสอบว่ามีการตั้งค่าเวลาหรือยัง
+        Serial.printf("Current Time: %02d:%02d\n", currentHour, currentMinute);
+        Serial.printf("ON Time: %02d:%02d\n", ledHourOn, ledMinOn);
+        Serial.printf("OFF Time: %02d:%02d\n", ledHourOff, ledMinOff);
 
+        ledState = isLedOn(currentHour, currentMinute, ledHourOn, ledMinOn, ledHourOff, ledMinOff);
+        if(ledState){writeLED();}else{off();}
+
+        Serial.print("LED State: ");
+        Serial.println(ledState ? "ON" : "OFF");
+    } else {
+        Serial.println("Waiting for LED time setup...");
+    }
     digitalWrite(PWM_FAN, HIGH); // Turn the fan on
 
     switch (currentState)
@@ -818,8 +880,8 @@ void lcdHomepage()
         delay(1000); 
         return; 
     }
-    int currentHour = dt.tm_hour;
-    int currentMinute = dt.tm_min;
+    currentHour = dt.tm_hour;
+    currentMinute = dt.tm_min;
     
     char timeStr[10];  // Buffer สำหรับเก็บข้อความเวลา
     sprintf(timeStr, "%02d:%02d", currentHour, currentMinute);
@@ -1018,6 +1080,27 @@ void off(){
     ledcWrite(pwmLed3, 0);
     ledcWrite(pwmLed4, 0);
     ledcWrite(pwmLed5, 0);
+}
+
+bool isLedOn(int currentHour, int currentMinute, int onHour, int onMinute, int offHour, int offMinute) {
+    // แปลงเวลาให้เป็นจำนวนนาทีตั้งแต่เที่ยงคืน
+    int currentMinutes = currentHour * 60 + currentMinute;
+    int onMinutes = onHour * 60 + onMinute;
+    int offMinutes = offHour * 60 + offMinute;
+
+    // ตรวจสอบว่าห้ามตั้งเวลาเปิดและปิดเป็นค่าเดียวกัน
+    if (onMinutes == offMinutes) {
+        Serial.println("Error: ON and OFF times cannot be the same!");
+        return false;
+    }
+
+    if (onMinutes < offMinutes) {  
+        // กรณีช่วงเวลาเปิด-ปิดอยู่ภายในวันเดียวกัน (เช่น 08:00 - 20:00)
+        return (currentMinutes >= onMinutes && currentMinutes < offMinutes);
+    } else {  
+        // กรณีช่วงเวลาเปิด-ปิดคร่อมข้ามเที่ยงคืน (เช่น 22:00 - 06:00)
+        return (currentMinutes >= onMinutes || currentMinutes < offMinutes);
+    }
 }
 
 void rtcInit() {
